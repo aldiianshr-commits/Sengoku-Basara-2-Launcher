@@ -1,0 +1,21 @@
+/build*/
+/out/
+*.o
+*.obj
+*.exe
+!tools/**/*.exe
+.vs/
+.vscode/
+CMakeUserPresets.json
+# Never commit game data or code recompiled from it
+*.iso
+*.bin
+*.cue
+*.img
+*.chd
+SLPM_*
+SLPS_*
+SLUS_*
+SLES_*
+SCPS_*
+gen/
