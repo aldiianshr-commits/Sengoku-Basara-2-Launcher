@@ -1,0 +1,3 @@
+hello: thread id 1
+hello: clock ok
+hello: done

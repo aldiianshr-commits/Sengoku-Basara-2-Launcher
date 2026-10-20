@@ -1,5 +1,6 @@
 // Memory-mapped I/O dispatch, DMA controller and EE timers.
 #include "ps2/hw.hpp"
+#include "ps2/ipu.hpp"
 
 #include <cstring>
 
@@ -26,7 +27,7 @@ int channelOf(uint32_t phys) {
 uint32_t Machine::mmioRead32(uint32_t p) {
     if (p >= 0x12000000 && p < 0x12002000) return gs->readPriv32(p);
     if (p < 0x10002000 && p >= 0x10000000) return timers->read(p);
-    if (p >= 0x10002000 && p < 0x10003000) return 0; // IPU registers (idle)
+    if (p >= 0x10002000 && p < 0x10003000) return (uint32_t)(ipu->read64(p & ~7u) >> ((p & 4) * 8));
     if (p >= 0x10003000 && p < 0x10003800) return gif->read(p);
     if (p >= 0x10003800 && p < 0x10003C00) return vif->readReg(0, p & 0x3FF);
     if (p >= 0x10003C00 && p < 0x10004000) return vif->readReg(1, p & 0x3FF);
@@ -56,7 +57,10 @@ void Machine::mmioWrite32(uint32_t p, uint32_t v) {
         timers->write(p, v);
         return;
     }
-    if (p >= 0x10002000 && p < 0x10003000) return; // IPU
+    if (p >= 0x10002000 && p < 0x10003000) {
+        if (!(p & 4)) ipu->write64(p, v); // upper words of the 64-bit registers are unused
+        return;
+    }
     if (p >= 0x10003000 && p < 0x10003800) {
         gif->write(p, v);
         return;
@@ -115,6 +119,10 @@ void Machine::mmioWrite64(uint32_t p, uint64_t v) {
 
 void Machine::mmioRead128(uint32_t p, Reg128* out) {
     std::memset(out, 0, 16);
+    if (p >= 0x10007000 && p < 0x10007010) {
+        ipu->readFifo(out);
+        return;
+    }
     if (p >= 0x10004000 && p < 0x10008000) return; // FIFO reads
     out->u64[0] = mmioRead64(p);
     out->u64[1] = mmioRead64(p + 8);
@@ -133,7 +141,11 @@ void Machine::mmioWrite128(uint32_t p, const Reg128* v) {
         gif->writeFifo(v->u8);
         return;
     }
-    if (p >= 0x10007000 && p < 0x10008000) return; // IPU FIFO
+    if (p >= 0x10007010 && p < 0x10007020) {
+        ipu->writeFifo(v);
+        return;
+    }
+    if (p >= 0x10007000 && p < 0x10008000) return;
     mmioWrite64(p, v->u64[0]);
     mmioWrite64(p + 8, v->u64[1]);
 }
@@ -220,16 +232,9 @@ void Dmac::kick(int c) {
     case DMA_VIF1: transferGifVif(c); break;
     case DMA_SIF0: m_.sif->pump(); return;
     case DMA_SIF1: transferSif1(); break;
-    default: {
-        // IPU channels: not emulated yet - complete immediately so code waiting on them proceeds.
-        static int warned = 0;
-        if (warned++ < 8) logWarn("dmac: channel %d transfer not emulated", c);
-        DmaRegs& r = ch[c];
-        r.qwc = 0;
-        const int ch_ = c;
-        m_.schedule(m_.cycles + 64, [this, ch_]() { complete(ch_); });
-        return;
-    }
+    case DMA_FROM_IPU: m_.ipu->dmaOutKick(); return;
+    case DMA_TO_IPU: m_.ipu->dmaInKick(); return;
+    default: break;
     }
 }
 

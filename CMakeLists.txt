@@ -68,12 +68,16 @@ add_library(ps2runtime STATIC
   runtime/src/iop.cpp
   runtime/src/iop_vfs.cpp
   runtime/src/iop_services.cpp
+  runtime/src/iop_pad.cpp
+  runtime/src/iop_mc.cpp
+  runtime/src/iop_sdr.cpp
   runtime/src/hw.cpp
   runtime/src/vu.cpp
   runtime/src/vif.cpp
   runtime/src/gs.cpp
   runtime/src/gs_raster.cpp
   runtime/src/spu2.cpp
+  runtime/src/ipu.cpp
   runtime/src/pad.cpp
   runtime/src/cdvd.cpp
   runtime/src/rt.cpp

@@ -27,13 +27,22 @@ jobs:
       - name: Build
         run: cmake --build build -j
       - name: Unit tests
-        run: ./build/tests/sb2_unit_tests | tee unit-tests.log
+        run: |
+          ./build/tests/sb2_unit_tests | tee unit-tests.log
+          echo "::notice title=Unit tests (Linux)::$(tail -n1 unit-tests.log)"
       - name: Homebrew tests (clang MIPS -> recompiled)
-        run: python3 tools/run_homebrew.py --build build | tee homebrew-tests.log
+        run: |
+          python3 tools/run_homebrew.py --build build | tee homebrew-tests.log
+          echo "::notice title=Homebrew GS/VU1 test::$(tail -n1 homebrew-tests.log)"
+      - name: ps2sdk program tests (kernel, PAD, MC, CDVD, libsd/SPU2)
+        run: |
+          python3 tools/run_ps2sdk_tests.py --build build | tee ps2sdk-tests.log
+          echo "::notice title=ps2sdk tests (Linux)::$(grep -cE '^PASS' ps2sdk-tests.log) passed, $(grep -cE '^FAIL' ps2sdk-tests.log) failed"
       - name: PS2 hardware test suite (ps2autotests)
         run: |
           git clone --depth 1 https://github.com/unknownbrackets/ps2autotests ext/ps2autotests
           python3 tools/run_autotests.py --suite ext/ps2autotests --build build --jobs 4 --json autotests.json | tee autotests.log
+          echo "::notice title=ps2autotests::$(tail -n1 autotests.log)"
       - name: Pipeline test (disc image -> recompile -> compile -> run)
         env:
           SB2_SDK: ${{ github.workspace }}/build/sdk
@@ -45,6 +54,8 @@ jobs:
           ./build/launcher/sb2build build/homebrew_gs.iso --play --frames 60 --exit-screenshot game-linux.png | tee -a pipeline.log
           python3 tools/ci/check_png.py game-linux.png --expect-not-black --min-colors 6
           ./build/launcher/SB2Launcher --frames 20 --screenshot launcher-linux.png
+          python3 tools/ci/make_test_isos.py build/test-isos
+          python3 tools/ci/run_iso_tests.py --sb2build build/launcher/sb2build --isos build/test-isos --expected tests/ps2sdk/expected --log iso-tests-linux.log
       - uses: actions/upload-artifact@v4
         with:
           name: test-logs-linux
@@ -58,6 +69,7 @@ jobs:
           path: |
             build/homebrew/gs_basic.elf
             build/homebrew_gs.iso
+            build/test-isos/*.iso
 
   windows-build:
     name: Windows x64 build (llvm-mingw cross)
@@ -115,12 +127,17 @@ jobs:
         run: |
           ./wintests/sb2_unit_tests.exe | Tee-Object unit-tests-windows.log
           if ($LASTEXITCODE -ne 0) { exit 1 }
+          $last = (Get-Content unit-tests-windows.log | Select-Object -Last 1)
+          Write-Output "::notice title=Unit tests (Windows)::$last"
       - name: Recompile homebrew disc with the bundled compiler
         shell: pwsh
         run: |
           New-Item -ItemType File app/portable.txt | Out-Null
           ./app/tools/sb2build.exe media/homebrew_gs.iso | Tee-Object pipeline-windows.log
           if ($LASTEXITCODE -ne 0) { exit 1 }
+          $tc = (Select-String -Path pipeline-windows.log -Pattern '^toolchain:' | Select-Object -First 1).Line
+          $vf = (Select-String -Path pipeline-windows.log -Pattern 'verification exit code' | Select-Object -Last 1).Line
+          Write-Output "::notice title=Bundled compiler pipeline (Windows)::$tc / $vf"
       - name: Run recompiled program (headless)
         shell: pwsh
         run: |
@@ -131,15 +148,25 @@ jobs:
         env:
           SB2_D3D12_WARP: "1"
         run: |
-          ./app/tools/sb2build.exe media/homebrew_gs.iso --play --frames 120 --exit-screenshot game-d3d12.png | Tee-Object -Append pipeline-windows.log
-          python tools/ci/check_png.py game-d3d12.png --expect-not-black --min-colors 6
+          ./app/tools/sb2build.exe media/homebrew_gs.iso --play --frames 120 --exit-screenshot game-d3d12.png | Tee-Object game-d3d12.log
+          Get-Content game-d3d12.log | Add-Content pipeline-windows.log
+          $video = (Select-String -Path game-d3d12.log -Pattern '^video:' | Select-Object -First 1).Line
+          $png = (python tools/ci/check_png.py game-d3d12.png --expect-not-black --min-colors 6)
+          if ($LASTEXITCODE -ne 0) { Write-Output "::error::$png"; exit 1 }
+          Write-Output "::notice title=Game window (Windows)::$video / $png"
       - name: Launcher screenshot (Direct3D 12 WARP)
         shell: pwsh
         env:
           SB2_D3D12_WARP: "1"
         run: |
           Start-Process -Wait -FilePath ./app/SB2Launcher.exe -ArgumentList "--frames","30","--screenshot","$PWD/launcher-d3d12.png","--scan","$PWD/media"
-          python tools/ci/check_png.py launcher-d3d12.png --expect-not-black
+          $png = (python tools/ci/check_png.py launcher-d3d12.png --expect-not-black)
+          if ($LASTEXITCODE -ne 0) { Write-Output "::error::$png"; exit 1 }
+          Write-Output "::notice title=Launcher (Windows)::$png"
+      - name: ps2sdk programs through the user pipeline (bundled compiler)
+        shell: pwsh
+        run: |
+          python tools/ci/run_iso_tests.py --sb2build ./app/tools/sb2build.exe --isos media/test-isos --expected tests/ps2sdk/expected --log iso-tests-windows.log
       - uses: actions/upload-artifact@v4
         if: always()
         with:

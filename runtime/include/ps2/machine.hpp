@@ -40,6 +40,7 @@ class Gs;
 class Gif;
 class Vif;
 class Vu;
+class Ipu;
 class Spu2;
 class Pad;
 class Cdvd;
@@ -146,6 +147,7 @@ public:
     std::unique_ptr<Vif> vif;
     std::unique_ptr<Vu> vu;
     std::unique_ptr<Spu2> spu2;
+    std::unique_ptr<Ipu> ipu;
     std::unique_ptr<Pad> pad;
     std::unique_ptr<Cdvd> cdvd;
 
@@ -156,6 +158,8 @@ public:
     // Called on the emulation thread at the start of every vertical blank,
     // after the frame has been handed to Gs::onFrame (pacing, pause, audio).
     std::function<void()> onVsync;
+    // Runtime services that run once per vertical blank (IOP pad updates...).
+    std::vector<std::function<void()>> vblankHooks;
     // Video standard selected by the game (SetGsCrt): true = PAL (50 Hz).
     bool palMode = false;
 

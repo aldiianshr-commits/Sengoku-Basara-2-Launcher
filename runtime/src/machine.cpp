@@ -11,6 +11,7 @@
 #include "ps2/gs.hpp"
 #include "ps2/hw.hpp"
 #include "ps2/iop.hpp"
+#include "ps2/ipu.hpp"
 #include "ps2/kernel.hpp"
 #include "ps2/log.hpp"
 #include "ps2/pad.hpp"
@@ -42,9 +43,13 @@ Machine::Machine(const ModuleInfo* mod, const RuntimeConfig& c) : cfg(c), mod_(m
     gif = std::make_unique<Gif>(*this);
     vif = std::make_unique<Vif>(*this);
     spu2 = std::make_unique<Spu2>(*this);
+    ipu = std::make_unique<Ipu>(*this);
     pad = std::make_unique<Pad>(*this);
     cdvd = std::make_unique<Cdvd>(*this);
     iop = std::make_unique<Iop>(*this);
+    // The SPU2 runs in emulated time (voice status registers must advance
+    // even without an audio device); the front-end only consumes the output.
+    vblankHooks.push_back([this]() { spu2->advanceField(palMode ? 50.0 : 59.94); });
     consoleOut = [](const char* s, size_t n) {
         std::fwrite(s, 1, n, stdout);
         std::fflush(stdout);

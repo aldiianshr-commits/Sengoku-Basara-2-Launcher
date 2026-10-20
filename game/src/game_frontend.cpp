@@ -122,7 +122,6 @@ private:
     std::atomic<int> audioLatencyMs_{64};
     Clock::time_point nextVsync_{};
     bool pacingReset_ = true;
-    double audioFrac_ = 0.0;
 
     // Statistics (emulation thread writes, main reads)
     std::atomic<uint64_t> vsyncCount_{0};
@@ -168,12 +167,9 @@ void GameFrontend::onVsync() {
     const int limit = fpsLimit_.load(std::memory_order_relaxed);
     const double rate = limit > 0 ? (double)limit : consoleRate;
 
-    // Audio: render the SPU2 output for this field at 48 kHz.
-    if (audioEnabled_.load(std::memory_order_relaxed)) {
-        audioFrac_ += 48000.0 / rate;
-        const size_t n = (size_t)audioFrac_;
-        audioFrac_ -= (double)n;
-        m.spu2->generate(n);
+    // Audio: the SPU2 renders each field itself; keep the device queue bounded.
+    m.spu2->enabled = audioEnabled_.load(std::memory_order_relaxed);
+    if (m.spu2->enabled) {
         const size_t maxQueued = (size_t)(48 * std::max(32, audioLatencyMs_.load()) * 3);
         m.spu2->trim(maxQueued);
     }

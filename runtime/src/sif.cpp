@@ -1,8 +1,10 @@
 #include "ps2/sif.hpp"
 
+#include <algorithm>
 #include <cstring>
 
 #include "ps2/hw.hpp"
+#include "ps2/iop.hpp"
 #include "ps2/log.hpp"
 #include "ps2/machine.hpp"
 
@@ -53,6 +55,8 @@ uint32_t Sif::iopFree(uint32_t addr) {
     heapBlocks_.erase(addr);
     return 0;
 }
+
+uint32_t Sif::iopHeapFree() const { return heapNext_ < IOP_RAM_SIZE ? IOP_RAM_SIZE - heapNext_ : 0; }
 
 void Sif::onSetGsCrt(uint32_t interlace, uint32_t mode, uint32_t field) {
     PS2_DEBUG(Gs, "SetGsCrt interlace=%u mode=%u field=%u", interlace, mode, field);
@@ -145,6 +149,19 @@ void Sif::handleIopCommand(uint32_t iopAddr) {
         break;
     case SIF_CMD_SET_SREG:
         break;
+    case SIF_CMD_RESET_CMD: {
+        // sceSifResetIop / SifIopReboot: "rom0:UDNL <IOPRP image>".  The HLE
+        // IOP keeps its native services; only the bookkeeping is reset.
+        const uint32_t arglen = std::min<uint32_t>(w[4], 79);
+        std::string arg;
+        for (uint32_t i = 0; i < arglen; ++i) arg.push_back((char)m_.iopRam[(iopAddr + 24 + i) & (IOP_RAM_SIZE - 1)]);
+        resetCount++;
+        lastResetArg = arg;
+        logInfo("sif: IOP reboot #%d requested (%s)", resetCount, arg.c_str());
+        eePktBuf_ = 0;
+        if (m_.iop) m_.iop->onReboot(arg);
+        break;
+    }
     case SIF_CMD_RPC_BIND:
         handleBind(w);
         break;
@@ -193,6 +210,7 @@ void Sif::handleCall(const uint32_t* w, uint32_t) {
     RpcServer* srv = server(sid);
     std::vector<uint8_t> reply;
     int64_t latency = 1000;
+    std::function<void()> complete;
     if (!srv) {
         logWarn("sif: RPC call to unknown server descriptor %08x fno=%u", sd, fno);
     } else {
@@ -200,8 +218,12 @@ void Sif::handleCall(const uint32_t* w, uint32_t) {
         const uint32_t buf = serverBuf_[sid];
         for (uint32_t i = 0; i < ssize; ++i) in[i] = m_.iopRam[(buf + i) & (IOP_RAM_SIZE - 1)];
         rpcCallCount[sid]++;
+        srv->nextLatency = -1;
+        srv->onComplete = nullptr;
         reply = srv->call(fno, in, rsize);
-        latency = srv->latency(fno);
+        latency = srv->nextLatency >= 0 ? srv->nextLatency : srv->latency(fno);
+        complete = std::move(srv->onComplete);
+        srv->onComplete = nullptr;
     }
     if (reply.size() > rsize) reply.resize(rsize);
     std::vector<uint8_t> pkt(64, 0);
@@ -213,15 +235,25 @@ void Sif::handleCall(const uint32_t* w, uint32_t) {
     put32(pkt, 28, w[7]);
     put32(pkt, 32, SIF_CMD_RPC_CALL);
     put32(pkt, 36, sd);
+    if (latency == INT64_MAX) return; // the server answers later (or never)
     const uint32_t dest = recvbuf;
+    const uint32_t eePkt = w[5];
     if (rmode == 0) {
-        // No completion packet requested: just deliver the data.
-        m_.schedule(m_.cycles + latency, [this, dest, reply]() {
+        // No completion packet requested (NOWAIT without end function): the
+        // IOP DMAs the reply and writes the call packet back with rpc_id and
+        // rec_id cleared, which returns it to the EE's packet pool.
+        m_.schedule(m_.cycles + latency, [this, dest, reply, eePkt, complete]() {
+            if (complete) complete();
             for (size_t i = 0; i < reply.size(); ++i) m_.write8(dest + (uint32_t)i, reply[i]);
+            if (eePkt) {
+                m_.write32(eePkt + 16, 0); // rec_id
+                m_.write32(eePkt + 24, 0); // rpc_id
+            }
         });
         return;
     }
-    m_.schedule(m_.cycles + latency, [this, pkt, dest, reply]() mutable {
+    m_.schedule(m_.cycles + latency, [this, pkt, dest, reply, complete]() mutable {
+        if (complete) complete();
         sendToEe(std::move(pkt), dest, std::move(reply));
     });
 }

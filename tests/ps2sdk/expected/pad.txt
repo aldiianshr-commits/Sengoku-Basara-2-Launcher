@@ -1,0 +1,19 @@
+pad: load SIO2MAN 1
+pad: load PADMAN 1
+pad: init 1
+pad: portmax 2 slotmax 1
+pad: open 1
+pad: state 6
+pad: modecurid 4 modetable 2 [4 7]
+pad: setmainmode 1
+pad: reqstate 0
+pad: modecurid 7
+pad: actuators 2
+pad: pressmode 1
+pad: read len 8 ok 0 mode 73 btns 4010
+pad: sticks 80 80 80 80
+pad: cross pressure 0
+pad: actalign 1
+pad: actdirect 1
+pad: port2 state 1
+pad: done

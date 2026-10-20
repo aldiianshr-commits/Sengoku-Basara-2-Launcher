@@ -1,0 +1,6 @@
+threads: sema 1
+threads: created 1 1
+threads: order 1 2 count 2
+threads: alarm woke us 1
+threads: vsync handler ran 1
+threads: done

@@ -5,6 +5,7 @@
 #include <deque>
 #include <list>
 #include <map>
+#include <set>
 #include <memory>
 #include <string>
 #include <vector>
@@ -151,6 +152,7 @@ private:
     uint32_t mainStackTop_ = 0;
     uint32_t rootFunc_ = 0;
     int exitCode_ = 0;
+    std::set<int32_t> warnedSyscalls_;
 };
 
 } // namespace ps2

@@ -36,6 +36,12 @@ public:
     virtual std::vector<uint8_t> call(uint32_t fno, const std::vector<uint8_t>& in, uint32_t recvSize) = 0;
     // Delay (EE cycles) before the reply is delivered (models IOP latency).
     virtual int64_t latency(uint32_t fno) const { (void)fno; return 2000; }
+    // A call may override the latency of the reply it just produced (e.g.
+    // proportional to the amount of data read from the disc).
+    int64_t nextLatency = -1;
+    // Work to perform on the IOP side when the reply is delivered (data
+    // transfers into EE memory that must not be visible earlier).
+    std::function<void()> onComplete;
 };
 
 class Sif {
@@ -63,6 +69,9 @@ public:
     uint32_t iopCmdBuffer() const { return kIopCmdBuf; }
     uint32_t iopAlloc(uint32_t size); // simple IOP heap
     uint32_t iopFree(uint32_t addr);
+    uint32_t iopHeapFree() const;
+    int resetCount = 0;              // IOP reboots requested by the game
+    std::string lastResetArg;        // e.g. "rom0:UDNL cdrom0:\\MODULES\\IOPRP300.IMG;1"
 
     // statistics / debug
     std::map<uint32_t, uint32_t> rpcCallCount;

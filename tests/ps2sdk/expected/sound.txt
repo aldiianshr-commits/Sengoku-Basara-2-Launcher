@@ -1,0 +1,13 @@
+sound: load LIBSD 1
+sound: load SDRDRV 1
+sound: remoteinit 0
+sound: sdinit 0
+sound: iop alloc 1
+sound: voicetrans 512
+sound: transstatus 1
+sound: mvol readback 3fff
+sound: ssa readback 05010
+sound: envx after attack > 0x7000: 1
+sound: endx 1
+sound: note2pitch 2000
+sound: done

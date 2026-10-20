@@ -2,13 +2,14 @@
 // (used by automated tests and for scripting).
 //
 //   sb2build IMAGE [--force] [--jobs N] [--opt N] [--no-auto-entries]
-//                  [--play] [--frames N] [--exit-screenshot FILE] [--headless]
+//                  [--play] [--frames N] [--exit-screenshot FILE] [--headless] [-- runtime args...]
 //
 // Exit code 0 when the build (and the optional run) succeeded.
 #include <chrono>
 #include <cstdio>
 #include <string>
 #include <thread>
+#include <vector>
 
 #include "builder.hpp"
 #include "game_session.hpp"
@@ -21,6 +22,7 @@ using namespace sb2;
 int main(int argc, char** argv) {
     std::string image, shot;
     bool force = false, play = false, headless = false, autoEntries = true;
+    std::vector<std::string> passthrough;
     int jobs = 0, opt = -1, frames = 0;
     for (int i = 1; i < argc; ++i) {
         const std::string a = argv[i];
@@ -33,6 +35,9 @@ int main(int argc, char** argv) {
         else if (a == "--frames") frames = std::atoi(next().c_str());
         else if (a == "--exit-screenshot") shot = next();
         else if (a == "--headless") headless = true;
+        else if (a == "--") {
+            for (++i; i < argc; ++i) passthrough.push_back(argv[i]);
+        }
         else if (a == "-h" || a == "--help") {
             std::printf("usage: sb2build IMAGE [--force] [--jobs N] [--opt N] [--no-auto-entries] [--play] [--frames N] "
                         "[--exit-screenshot FILE] [--headless]\n");
@@ -86,6 +91,7 @@ int main(int argc, char** argv) {
     if (frames > 0) args.insert(args.end(), {"--frames", std::to_string(frames)});
     if (!shot.empty()) args.insert(args.end(), {"--exit-screenshot", shot});
     if (headless) args.push_back("--headless");
+    args.insert(args.end(), passthrough.begin(), passthrough.end());
     std::string out;
     const int rc = runProcess(args, out);
     std::printf("%s", out.c_str());

@@ -1,0 +1,21 @@
+mc: load MCMAN 1
+mc: load MCSERV 1
+mc: init 0
+mc: getinfo -1 type 2 formatted 1 free>0 1
+mc: getinfo again 0
+mc: mkdir 0
+mc: open for write 1
+mc: write 25
+mc: close 0
+mc: read 25 'goku Basara 2 Heroes save'
+mc: seek 6
+mc: read2 5 'asara'
+mc: getdir 3
+mc:  . size 0 attr 8427
+mc:  .. size 0 attr 8427
+mc:  DATA.BIN size 25 attr 8497
+mc: open missing -4
+mc: delete non-empty dir -6
+mc: delete file 0
+mc: delete dir 0
+mc: done

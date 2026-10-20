@@ -1,0 +1,16 @@
+cdvd: init 1
+cdvd: mmode 1
+cdvd: diskready 2
+cdvd: disktype 12
+cdvd: readclock 1
+cdvd: search 1 size 40960 name DATA.BIN
+cdvd: search missing 0
+cdvd: read issued 1
+cdvd: read data ok 1 error 0
+cdvd: unaligned read ok 1
+cdvd: stinit 1
+cdvd: ststart 1
+cdvd: stread 8 err 0 ok 1
+cdvd: ststop 1
+cdvd: status 10
+cdvd: done

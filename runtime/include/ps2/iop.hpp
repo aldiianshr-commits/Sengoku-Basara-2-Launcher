@@ -45,17 +45,31 @@ private:
     int nextFd_ = 3;
 };
 
+struct IopModule {
+    int id = 0;
+    std::string path;   // as requested by the game
+    std::string name;   // IRX module name (from .iopmod) or file name
+    uint16_t version = 0;
+    bool native = false; // provided by a native (HLE) implementation
+};
+
 class Iop {
 public:
     explicit Iop(Machine& m);
     ~Iop();
     void boot(); // register RPC services
+    void onReboot(const std::string& arg);
     Vfs& vfs() { return *vfs_; }
-    std::vector<std::string> loadedModules;
+    // Module loading (LOADFILE). Returns the module id or a negative error.
+    int loadModule(const std::string& path, const std::string& args);
+    const std::vector<IopModule>& modules() const { return modules_; }
+    std::vector<std::string> loadedModules; // names, for diagnostics
 
 private:
     Machine& m_;
     std::unique_ptr<Vfs> vfs_;
+    std::vector<IopModule> modules_;
+    int nextModuleId_ = 2;
 };
 
 } // namespace ps2

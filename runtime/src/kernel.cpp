@@ -783,8 +783,44 @@ void Kernel::syscall(Ctx* c, uint32_t addr) {
     case 0x7d: ret = 0; break; // PSMode
     case 0x7e: ret = 0; break; // MachineType
     case 0x7f: ret = RAM_SIZE; break; // GetMemorySize
+    case 0x54: break;                  // xlaunch (unused by games)
+    case 0x55:                         // PutTLBEntry
+    case 0x56:                         // _SetTLBEntry
+        ret = (int32_t)a0;             // TLB is not modelled: identity-mapped memory
+        break;
+    case 0x57: ret = 0; break;         // GetTLBEntry
+    case 0x58: ret = -1; break;        // ProbeTLBEntry: no match
+    case 0x59: ret = 0; break;         // ExpandScratchPad
+    case 0x6c: ret = 0; break;         // SetCPUTimerHandler
+    case 0x6d: ret = 0; break;         // SetCPUTimer
+    case 0x6e: break;                  // SetOsdConfigParam2
+    case 0x6f: {                       // GetOsdConfigParam2(config, size, offset)
+        for (uint32_t i = 0; i < a1 && i < 64; ++i) m_.write8(a0 + i, 0);
+        ret = 0;
+        break;
+    }
+    case 0x7b:                         // ExecOSD: return to the system menu
+        logInfo("kernel: ExecOSD - the game asked to return to the PS2 menu");
+        m_.requestExit(0);
+        throw GuestExit{0};
+    case 0x80: ret = 0; break;         // _GetGsDxDyOffset
+    case 0x82: ret = 0; break;         // _InitTLB
+    case 0x83: {                       // FindAddress(start, end, value)
+        ret = 0;
+        for (uint32_t p = a0 & ~3u; p < a1; p += 4)
+            if (m_.read32(p) == a2) {
+                ret = (int32_t)p;
+                break;
+            }
+        break;
+    }
+    case 0x85: break;                  // SetMemoryMode
+    case 0x86: ret = 0; break;         // GetMemoryMode: 32 MB retail
     default:
-        logWarn("kernel: unimplemented syscall %d (0x%x) at %08x", num, (uint32_t)num, addr);
+        if (!warnedSyscalls_.count(num)) {
+            warnedSyscalls_.insert(num);
+            logWarn("kernel: unimplemented syscall %d (0x%x) at %08x", num, (uint32_t)num, addr);
+        }
         ret = 0;
         break;
     }

@@ -1,0 +1,7 @@
+mpeg: sequence 96x64 chroma 1
+mpeg: mpeg2 frames 9
+mpeg: mpeg2 quality ok 1
+mpeg: sequence 96x64 chroma 1
+mpeg: mpeg1 frames 9
+mpeg: mpeg1 quality ok 1
+mpeg: done

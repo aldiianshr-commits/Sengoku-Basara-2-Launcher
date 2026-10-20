@@ -221,6 +221,7 @@ void Gs::vblankStart() {
         frameValid_ = true;
     }
     if (onFrame) onFrame(f);
+    for (auto& h : m_.vblankHooks) h();
     if (m_.onVsync) m_.onVsync();
     if (m_.cfg.maxFrames && m_.frames >= m_.cfg.maxFrames) m_.requestExit(0);
     m_.schedule(m_.cycles + kVblankCycles, [this]() { vblankEnd(); });
