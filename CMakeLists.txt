@@ -23,8 +23,16 @@ endif()
 add_library(sb2common STATIC
   common/src/hash.cpp
   common/src/elf_loader.cpp
-  common/src/disc.cpp)
+  common/src/disc.cpp
+  common/src/json.cpp)
 target_include_directories(sb2common PUBLIC common/include)
+
+# ---------------------------------------------------------------- scanner
+add_library(sb2scanner STATIC scanner/src/scanner.cpp)
+target_include_directories(sb2scanner PUBLIC scanner/include)
+target_link_libraries(sb2scanner PUBLIC sb2common)
+add_executable(sb2scan scanner/src/scan_main.cpp)
+target_link_libraries(sb2scan PRIVATE sb2scanner)
 
 # ---------------------------------------------------------------- recompiler
 add_library(ps2recomp_lib STATIC

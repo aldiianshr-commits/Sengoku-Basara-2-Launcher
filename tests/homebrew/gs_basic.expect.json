@@ -1,0 +1,20 @@
+{
+  "frames": 2,
+  "pixels": [
+    {"name": "background", "x": 10, "y": 10, "rgb": [32, 32, 64]},
+    {"name": "gouraud centroid", "x": 200, "y": 166, "rgb": [85, 85, 84], "tol": 2},
+    {"name": "gouraud red corner", "x": 110, "y": 102, "rgb": [240, 11, 2], "tol": 3},
+    {"name": "CT32 texel dark", "x": 402, "y": 102, "rgb": [0, 0, 0]},
+    {"name": "CT32 texel white", "x": 440, "y": 102, "rgb": [255, 255, 255]},
+    {"name": "PSMT8+CLUT index 0", "x": 402, "y": 252, "rgb": [255, 0, 0]},
+    {"name": "PSMT8+CLUT index 1", "x": 410, "y": 252, "rgb": [0, 255, 0]},
+    {"name": "PSMT8+CLUT index 2", "x": 418, "y": 252, "rgb": [0, 0, 255]},
+    {"name": "PSMT8+CLUT index 3", "x": 426, "y": 252, "rgb": [255, 255, 0]},
+    {"name": "alpha blend", "x": 50, "y": 410, "rgb": [143, 143, 159]},
+    {"name": "depth near", "x": 110, "y": 360, "rgb": [255, 0, 255]},
+    {"name": "depth overlap keeps near", "x": 150, "y": 400, "rgb": [255, 0, 255]},
+    {"name": "depth far visible", "x": 170, "y": 435, "rgb": [255, 255, 0]},
+    {"name": "VU1 XGKICK sprite", "x": 290, "y": 404, "rgb": [0, 255, 255]}
+  ],
+  "console": ["gs_basic: start", "gs_basic: done"]
+}

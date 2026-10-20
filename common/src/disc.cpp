@@ -84,7 +84,9 @@ std::unique_ptr<DiscImage> DiscImage::open(const std::string& path, std::string&
     uint64_t trackOff = 0;
     const std::string ext = lower(fs::path(path).extension().string());
     if (ext == ".cue") {
-        if (!parseCue(path, dataPath, raw, trackOff, err)) return nullptr;
+        std::string bin;
+        if (!parseCue(path, bin, raw, trackOff, err)) return nullptr;
+        dataPath = bin;
     }
     d->f_.open(dataPath, std::ios::binary);
     if (!d->f_) {
