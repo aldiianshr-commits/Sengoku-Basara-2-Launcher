@@ -118,9 +118,10 @@ void GsRasterizer::setup(uint64_t prim, Setup& s) {
     s.maxv = bits(c.clamp, 34, 10);
     s.lcm = bits(c.tex1, 0, 1);
     s.mxl = std::min<uint32_t>(bits(c.tex1, 2, 3), 6);
-    s.magLinear = bits(c.tex1, 5, 1) || gs_.bilinearOverride;
+    const int forced = gs_.textureFilterMode; // 0 = as game, 1 = force linear, 2 = force nearest
+    s.magLinear = forced == 1 || (forced == 0 && bits(c.tex1, 5, 1));
     const uint32_t mmin = bits(c.tex1, 6, 3);
-    s.minLinear = mmin == 1 || mmin == 3 || mmin == 5 || gs_.bilinearOverride;
+    s.minLinear = forced == 1 || (forced == 0 && (mmin == 1 || mmin == 3 || mmin == 5));
     s.mipNearest = mmin >= 2;
     s.lL = bits(c.tex1, 19, 2);
     s.lK = bits(c.tex1, 32, 12);

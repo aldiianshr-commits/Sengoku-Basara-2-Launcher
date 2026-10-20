@@ -31,7 +31,7 @@ union alignas(16) Reg128 {
 };
 static_assert(sizeof(Reg128) == 16);
 
-struct Machine;
+class Machine;
 
 // Per-thread CPU state. Each EE thread owns one Ctx; recompiled functions
 // receive a pointer to the Ctx of the thread they run on.

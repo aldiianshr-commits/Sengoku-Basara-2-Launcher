@@ -19,3 +19,5 @@ SLUS_*
 SLES_*
 SCPS_*
 gen/
+/dist/
+/ext/

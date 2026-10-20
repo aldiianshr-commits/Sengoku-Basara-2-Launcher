@@ -170,3 +170,17 @@ size_t Spu2::pull(int16_t* out, size_t frames) {
 }
 
 } // namespace ps2
+
+namespace ps2 {
+
+size_t Spu2::queuedFrames() {
+    std::lock_guard<std::mutex> lk(queueMutex_);
+    return queue_.size() / 2;
+}
+
+void Spu2::trim(size_t maxFrames) {
+    std::lock_guard<std::mutex> lk(queueMutex_);
+    while (queue_.size() > maxFrames * 2) queue_.pop_front();
+}
+
+} // namespace ps2

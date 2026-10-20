@@ -41,6 +41,8 @@ public:
     // Pull rendered audio for the host device.
     size_t pull(int16_t* out, size_t frames);
     void generate(size_t frames); // advance emulation by frames (called from emulation thread)
+    size_t queuedFrames();        // rendered stereo frames waiting for the host device
+    void trim(size_t maxFrames);  // drop the oldest audio beyond maxFrames (latency bound)
     float masterVolume = 1.0f;
     bool enabled = true;
 

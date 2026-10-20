@@ -1,5 +1,9 @@
 #include "codegen.hpp"
 
+#ifndef SB2_VERSION
+#define SB2_VERSION "0.0.0"
+#endif
+
 #include <cstdio>
 #include <filesystem>
 #include <fstream>
@@ -370,7 +374,7 @@ CodegenResult generate(const Program& prog, const CodegenOptions& opt) {
         t << "extern \"C\" const ps2::ModuleInfo ps2_module_info = {\n";
         t << "    \"" << opt.moduleName << "\",\n    \"" << opt.elfSha256 << "\",\n";
         t << "    " << imm(prog.elf().entry) << ",\n    kFuncs,\n    sizeof(kFuncs) / sizeof(kFuncs[0]),\n";
-        t << "    " << imm(textLo) << ", " << imm(textHi) << ",\n    \"" << "0.1.0" << "\",\n};\n";
+        t << "    " << imm(textLo) << ", " << imm(textHi) << ",\n    \"" << SB2_VERSION << "\",\n};\n";
         writeFile(fs::path(opt.outDir) / "recomp_table.cpp", t.str());
         res.files += 1;
     }

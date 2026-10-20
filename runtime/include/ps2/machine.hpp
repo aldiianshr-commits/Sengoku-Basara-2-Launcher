@@ -2,6 +2,7 @@
 // (GS, VIF, VU, SPU2, IOP services) live in their own classes owned here.
 #pragma once
 #include <cstdint>
+#include <atomic>
 #include <functional>
 #include <memory>
 #include <queue>
@@ -75,7 +76,8 @@ public:
     // Load the executable segments and run until the program exits.
     int run();
     void requestExit(int code);
-    bool exiting() const { return exitRequested_; }
+    bool exiting() const { return exitRequested_.load(std::memory_order_relaxed); }
+    int exitCode() const { return exitCode_; }
 
     // ---- memory
     uint8_t* ram = nullptr;
@@ -151,6 +153,11 @@ public:
     // Console output of the game (stdout of fileio, SIO, kernel print).
     std::function<void(const char*, size_t)> consoleOut;
     void console(const char* s, size_t n);
+    // Called on the emulation thread at the start of every vertical blank,
+    // after the frame has been handed to Gs::onFrame (pacing, pause, audio).
+    std::function<void()> onVsync;
+    // Video standard selected by the game (SetGsCrt): true = PAL (50 Hz).
+    bool palMode = false;
 
     // Statistics
     uint64_t frames = 0;
@@ -163,7 +170,7 @@ private:
     std::priority_queue<Event, std::vector<Event>, std::greater<Event>> events_;
     std::vector<uint64_t> cancelled_;
     uint64_t eventSeq_ = 1;
-    bool exitRequested_ = false;
+    std::atomic<bool> exitRequested_{false};
     int exitCode_ = 0;
     std::string consoleLine_;
 };

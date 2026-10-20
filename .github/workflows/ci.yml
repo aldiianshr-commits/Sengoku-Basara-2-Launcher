@@ -1,0 +1,192 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+    tags: ['v*']
+  pull_request:
+  workflow_dispatch:
+
+env:
+  LLVM_MINGW: llvm-mingw-20250924-ucrt
+  LLVM_MINGW_URL: https://github.com/mstorsjo/llvm-mingw/releases/download/20250924
+
+jobs:
+  linux:
+    name: Linux build + tests
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install tools
+        run: sudo apt-get update && sudo apt-get install -y ninja-build clang lld fonts-dejavu-core
+      - name: Configure
+        run: >
+          cmake -S . -B build -G Ninja -DCMAKE_BUILD_TYPE=Release
+          -DSDL_X11=OFF -DSDL_WAYLAND=OFF -DSDL_KMSDRM=OFF -DSDL_OPENGL=OFF -DSDL_OPENGLES=OFF -DSDL_VULKAN=OFF
+          -DSDL_GPU=OFF -DSDL_UNIX_CONSOLE_BUILD=ON -DSDL_ALSA=OFF -DSDL_PULSEAUDIO=OFF -DSDL_PIPEWIRE=OFF -DSDL_JACK=OFF -DSDL_SNDIO=OFF
+      - name: Build
+        run: cmake --build build -j
+      - name: Unit tests
+        run: ./build/tests/sb2_unit_tests | tee unit-tests.log
+      - name: Homebrew tests (clang MIPS -> recompiled)
+        run: python3 tools/run_homebrew.py --build build | tee homebrew-tests.log
+      - name: PS2 hardware test suite (ps2autotests)
+        run: |
+          git clone --depth 1 https://github.com/unknownbrackets/ps2autotests ext/ps2autotests
+          python3 tools/run_autotests.py --suite ext/ps2autotests --build build --jobs 4 --json autotests.json | tee autotests.log
+      - name: Pipeline test (disc image -> recompile -> compile -> run)
+        env:
+          SB2_SDK: ${{ github.workspace }}/build/sdk
+          SDL_VIDEODRIVER: offscreen
+          SDL_AUDIODRIVER: dummy
+        run: |
+          python3 tools/make_test_iso.py build/homebrew_gs.iso --elf build/homebrew/gs_basic.elf
+          ./build/launcher/sb2build build/homebrew_gs.iso | tee pipeline.log
+          ./build/launcher/sb2build build/homebrew_gs.iso --play --frames 60 --exit-screenshot game-linux.png | tee -a pipeline.log
+          python3 tools/ci/check_png.py game-linux.png --expect-not-black --min-colors 6
+          ./build/launcher/SB2Launcher --frames 20 --screenshot launcher-linux.png
+      - uses: actions/upload-artifact@v4
+        with:
+          name: test-logs-linux
+          path: |
+            *.log
+            autotests.json
+            *.png
+      - uses: actions/upload-artifact@v4
+        with:
+          name: homebrew-test-media
+          path: |
+            build/homebrew/gs_basic.elf
+            build/homebrew_gs.iso
+
+  windows-build:
+    name: Windows x64 build (llvm-mingw cross)
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install tools
+        run: sudo apt-get update && sudo apt-get install -y ninja-build
+      - name: Download llvm-mingw
+        run: |
+          curl -sSL -o lm-linux.tar.xz $LLVM_MINGW_URL/$LLVM_MINGW-ubuntu-22.04-x86_64.tar.xz
+          curl -sSL -o lm-windows.zip $LLVM_MINGW_URL/$LLVM_MINGW-x86_64.zip
+          tar xf lm-linux.tar.xz
+      - name: Configure
+        run: >
+          cmake -S . -B build-win -G Ninja -DCMAKE_BUILD_TYPE=Release
+          -DCMAKE_TOOLCHAIN_FILE=cmake/toolchains/llvm-mingw-x64.cmake
+          -DLLVM_MINGW_ROOT=$PWD/$LLVM_MINGW-ubuntu-22.04-x86_64
+      - name: Build
+        run: cmake --build build-win -j
+      - name: Package
+        run: |
+          VERSION=$(grep -oP 'project\(\S+ VERSION \K[0-9.]+' CMakeLists.txt)
+          echo "VERSION=$VERSION" >> $GITHUB_ENV
+          packaging/package_windows.sh build-win lm-windows.zip $VERSION
+          mkdir -p wintests && cp build-win/tests/sb2_unit_tests.exe wintests/
+      - uses: actions/upload-artifact@v4
+        with:
+          name: SB2HeroesRecompiled-win64
+          path: dist/SB2HeroesRecompiled
+      - uses: actions/upload-artifact@v4
+        with:
+          name: SB2HeroesRecompiled-win64-portable-zip
+          path: dist/*.zip
+          compression-level: 0
+      - uses: actions/upload-artifact@v4
+        with:
+          name: windows-unit-tests
+          path: wintests
+
+  windows-test:
+    name: Windows tests (bundled compiler, Direct3D 12 WARP)
+    needs: [linux, windows-build]
+    runs-on: windows-2022
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/download-artifact@v4
+        with: { name: SB2HeroesRecompiled-win64, path: app }
+      - uses: actions/download-artifact@v4
+        with: { name: windows-unit-tests, path: wintests }
+      - uses: actions/download-artifact@v4
+        with: { name: homebrew-test-media, path: media }
+      - name: Unit tests
+        shell: pwsh
+        run: |
+          ./wintests/sb2_unit_tests.exe | Tee-Object unit-tests-windows.log
+          if ($LASTEXITCODE -ne 0) { exit 1 }
+      - name: Recompile homebrew disc with the bundled compiler
+        shell: pwsh
+        run: |
+          New-Item -ItemType File app/portable.txt | Out-Null
+          ./app/tools/sb2build.exe media/homebrew_gs.iso | Tee-Object pipeline-windows.log
+          if ($LASTEXITCODE -ne 0) { exit 1 }
+      - name: Run recompiled program (headless)
+        shell: pwsh
+        run: |
+          ./app/tools/sb2build.exe media/homebrew_gs.iso --play --headless --frames 60 | Tee-Object -Append pipeline-windows.log
+          if ($LASTEXITCODE -ne 0) { exit 1 }
+      - name: Run recompiled program (window, Direct3D 12 WARP)
+        shell: pwsh
+        env:
+          SB2_D3D12_WARP: "1"
+        run: |
+          ./app/tools/sb2build.exe media/homebrew_gs.iso --play --frames 120 --exit-screenshot game-d3d12.png | Tee-Object -Append pipeline-windows.log
+          python tools/ci/check_png.py game-d3d12.png --expect-not-black --min-colors 6
+      - name: Launcher screenshot (Direct3D 12 WARP)
+        shell: pwsh
+        env:
+          SB2_D3D12_WARP: "1"
+        run: |
+          Start-Process -Wait -FilePath ./app/SB2Launcher.exe -ArgumentList "--frames","30","--screenshot","$PWD/launcher-d3d12.png","--scan","$PWD/media"
+          python tools/ci/check_png.py launcher-d3d12.png --expect-not-black
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: test-logs-windows
+          path: |
+            *.log
+            *.png
+            app/user/logs/**
+            app/user/cache/**/build.log
+
+  installer:
+    name: Windows installer
+    needs: windows-build
+    runs-on: windows-2022
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/download-artifact@v4
+        with: { name: SB2HeroesRecompiled-win64, path: dist/SB2HeroesRecompiled }
+      - name: Build installer
+        shell: pwsh
+        run: |
+          $ver = (Select-String -Path CMakeLists.txt -Pattern 'VERSION ([0-9.]+) LANGUAGES').Matches[0].Groups[1].Value
+          if (-not (Get-Command iscc -ErrorAction SilentlyContinue)) {
+            $iscc = "${env:ProgramFiles(x86)}\Inno Setup 6\ISCC.exe"
+            if (-not (Test-Path $iscc)) { choco install innosetup -y --no-progress | Out-Null }
+          } else { $iscc = "iscc" }
+          $iscc = if (Test-Path "${env:ProgramFiles(x86)}\Inno Setup 6\ISCC.exe") { "${env:ProgramFiles(x86)}\Inno Setup 6\ISCC.exe" } else { "iscc" }
+          & $iscc /DAppVersion=$ver /DSourceDir=..\..\dist\SB2HeroesRecompiled packaging\windows\installer.iss
+          if ($LASTEXITCODE -ne 0) { exit 1 }
+      - uses: actions/upload-artifact@v4
+        with:
+          name: SB2HeroesRecompiled-win64-setup
+          path: dist/*setup.exe
+          compression-level: 0
+
+  release:
+    name: GitHub release
+    if: startsWith(github.ref, 'refs/tags/v')
+    needs: [windows-test, installer]
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/download-artifact@v4
+        with: { path: artifacts }
+      - uses: softprops/action-gh-release@v2
+        with:
+          files: |
+            artifacts/SB2HeroesRecompiled-win64-setup/*.exe
+            artifacts/SB2HeroesRecompiled-win64-portable-zip/*.zip

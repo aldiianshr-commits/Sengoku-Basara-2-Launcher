@@ -26,6 +26,7 @@ enum class LogCat : uint32_t {
 };
 
 void logSetMask(uint32_t mask);           // categories enabled for debug output
+void logSetLevel(int level);              // 0 errors, 1 +warnings (default), 2 +info
 void logSetFile(const std::string& path); // additionally append to a file
 bool logEnabled(LogCat cat);
 void logDebug(LogCat cat, const char* fmt, ...)

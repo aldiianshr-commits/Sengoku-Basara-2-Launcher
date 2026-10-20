@@ -16,7 +16,8 @@ namespace ps2 {
 using namespace gsmem;
 
 namespace {
-constexpr int64_t kFieldCycles = 4920125;   // EE cycles per NTSC field (59.94 Hz)
+constexpr int64_t kNtscFieldCycles = 4920125; // EE cycles per NTSC field (59.94 Hz)
+constexpr int64_t kPalFieldCycles = 5898240;  // EE cycles per PAL field (50 Hz)
 constexpr int64_t kVblankCycles = 22 * 18743; // ~22 lines of vertical blank
 
 inline uint32_t bits(uint64_t v, int lo, int n) { return (uint32_t)((v >> lo) & ((1ull << n) - 1)); }
@@ -191,9 +192,11 @@ void Gs::writePriv64(uint32_t phys, uint64_t v) {
 
 bool Gs::interlaced() const { return (smode2_ & 1) != 0; }
 
+int64_t Gs::fieldCycles() const { return m_.palMode ? kPalFieldCycles : kNtscFieldCycles; }
+
 void Gs::startVideo() {
     const int64_t t0 = m_.cycles;
-    m_.schedule(t0 + kFieldCycles - kVblankCycles, [this]() { vblankStart(); });
+    m_.schedule(t0 + fieldCycles() - kVblankCycles, [this]() { vblankStart(); });
 }
 
 void Gs::vblankStart() {
@@ -218,6 +221,7 @@ void Gs::vblankStart() {
         frameValid_ = true;
     }
     if (onFrame) onFrame(f);
+    if (m_.onVsync) m_.onVsync();
     if (m_.cfg.maxFrames && m_.frames >= m_.cfg.maxFrames) m_.requestExit(0);
     m_.schedule(m_.cycles + kVblankCycles, [this]() { vblankEnd(); });
 }
@@ -225,7 +229,7 @@ void Gs::vblankStart() {
 void Gs::vblankEnd() {
     m_.intc->raise(INTC_VBLANK_END);
     m_.timers->onHblank();
-    m_.schedule(m_.cycles + kFieldCycles - kVblankCycles, [this]() { vblankStart(); });
+    m_.schedule(m_.cycles + fieldCycles() - kVblankCycles, [this]() { vblankStart(); });
 }
 
 bool Gs::latestFrame(GsFrame& out) {

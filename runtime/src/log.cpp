@@ -7,6 +7,7 @@ namespace ps2 {
 
 namespace {
 uint32_t g_mask = 0;
+int g_level = 2;
 FILE* g_file = nullptr;
 std::mutex g_mutex;
 
@@ -23,6 +24,7 @@ void emit(const char* prefix, const char* fmt, va_list ap) {
 } // namespace
 
 void logSetMask(uint32_t mask) { g_mask = mask; }
+void logSetLevel(int level) { g_level = level; }
 void logSetFile(const std::string& path) {
     std::lock_guard<std::mutex> lk(g_mutex);
     if (g_file) std::fclose(g_file);
@@ -37,12 +39,14 @@ void logDebug(LogCat, const char* fmt, ...) {
     va_end(ap);
 }
 void logInfo(const char* fmt, ...) {
+    if (g_level < 2) return;
     va_list ap;
     va_start(ap, fmt);
     emit("[info] ", fmt, ap);
     va_end(ap);
 }
 void logWarn(const char* fmt, ...) {
+    if (g_level < 1) return;
     va_list ap;
     va_start(ap, fmt);
     emit("[warn] ", fmt, ap);

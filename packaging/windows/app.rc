@@ -1,0 +1,29 @@
+// Application resources: icon, manifest (UTF-8 code page, per-monitor DPI,
+// long paths) and version information.
+#include <winver.h>
+1 ICON "app.ico"
+1 24 "app.manifest"
+
+VS_VERSION_INFO VERSIONINFO
+FILEVERSION 0,2,0,0
+PRODUCTVERSION 0,2,0,0
+FILEOS VOS_NT_WINDOWS32
+FILETYPE VFT_APP
+BEGIN
+  BLOCK "StringFileInfo"
+  BEGIN
+    BLOCK "040904B0"
+    BEGIN
+      VALUE "CompanyName", "SB2H Recompiled project"
+      VALUE "FileDescription", "Sengoku Basara 2 Heroes Recompiled"
+      VALUE "FileVersion", "0.2.0"
+      VALUE "ProductName", "Sengoku Basara 2 Heroes Recompiled"
+      VALUE "ProductVersion", "0.2.0"
+      VALUE "LegalCopyright", "Open source. Contains no game data."
+    END
+  END
+  BLOCK "VarFileInfo"
+  BEGIN
+    VALUE "Translation", 0x409, 1200
+  END
+END

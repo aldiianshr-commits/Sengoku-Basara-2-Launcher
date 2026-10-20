@@ -70,6 +70,7 @@ public:
     // Video timing
     void startVideo();
     bool interlaced() const;
+    int64_t fieldCycles() const; // EE cycles per video field
     uint32_t field() const { return field_; }
 
     // Display output: snapshot of the current displayed image.
@@ -83,7 +84,7 @@ public:
 
     // Settings
     int rasterThreads = 0; // 0 = auto
-    bool bilinearOverride = false;
+    int textureFilterMode = 0; // 0 = as the game requests, 1 = force bilinear, 2 = force nearest
     GsStats stats;
 
     // GIF tag state (exposed for VIF DIRECT/DIRECTHL partial packets)

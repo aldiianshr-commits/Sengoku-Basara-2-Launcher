@@ -40,6 +40,8 @@ const std::vector<KnownGame>& knownGames() {
     static const std::vector<KnownGame> games = {
         {"SLPM-66848", "Sengoku Basara 2 Heroes", 0xCA857E71u, "NTSC-J",
          "Target title: recompilation pipeline supported; game-specific compatibility in progress", true},
+        {"SLKA-25412", "Sengoku Basara 2 Heroes (Korea)", 0, "NTSC-K",
+         "Target title (Korean release): recompilation pipeline supported; untested", true},
     };
     return games;
 }

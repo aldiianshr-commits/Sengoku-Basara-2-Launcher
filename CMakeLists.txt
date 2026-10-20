@@ -1,5 +1,5 @@
 cmake_minimum_required(VERSION 3.20)
-project(SengokuBasara2HeroesRecompiled VERSION 0.1.0 LANGUAGES C CXX)
+project(SengokuBasara2HeroesRecompiled VERSION 0.2.0 LANGUAGES C CXX)
 
 set(CMAKE_CXX_STANDARD 20)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
@@ -11,6 +11,13 @@ endif()
 
 option(SB2_BUILD_FRONTEND "Build the SDL3 front-end and Windows launcher" ON)
 option(SB2_BUILD_TESTS "Build unit tests" ON)
+
+add_compile_definitions(SB2_VERSION="${PROJECT_VERSION}")
+if(MINGW)
+  # Large default thread stacks (EE interrupt handlers may run on them) and a
+  # static C++ runtime so executables have no DLL dependencies.
+  add_link_options(-static -Wl,--stack,8388608)
+endif()
 
 if(MSVC)
   add_compile_options(/W3 /utf-8 /permissive-)
@@ -24,8 +31,13 @@ add_library(sb2common STATIC
   common/src/hash.cpp
   common/src/elf_loader.cpp
   common/src/disc.cpp
-  common/src/json.cpp)
+  common/src/json.cpp
+  common/src/settings.cpp
+  common/src/platform.cpp)
 target_include_directories(sb2common PUBLIC common/include)
+if(WIN32)
+  target_link_libraries(sb2common PUBLIC shell32 ole32)
+endif()
 
 # ---------------------------------------------------------------- scanner
 add_library(sb2scanner STATIC scanner/src/scanner.cpp)
@@ -94,6 +106,28 @@ function(ps2_add_recompiled target elf)
   target_compile_options(${target} PRIVATE ${SB2_GENERATED_CXX_FLAGS} -w)
   target_link_libraries(${target} PRIVATE ps2main)
 endfunction()
+
+# ---------------------------------------------------------------- front-end
+if(SB2_BUILD_FRONTEND)
+  include(cmake/Dependencies.cmake)
+
+  # Shared UI layer: presenters (Direct3D 12 / SDL_Renderer), input, theme
+  # and settings editors.  Used by the launcher and by game executables.
+  add_library(sb2ui STATIC
+    ui/src/presenter_common.cpp
+    ui/src/presenter_d3d12.cpp
+    ui/src/input.cpp
+    ui/src/ui_common.cpp)
+  target_include_directories(sb2ui PUBLIC ui/include)
+  target_link_libraries(sb2ui PUBLIC sb2common imgui ${SB2_SDL3_TARGET})
+
+  # Windowed game front-end linked into every recompiled game executable.
+  add_library(sb2game STATIC game/src/game_frontend.cpp)
+  target_include_directories(sb2game PUBLIC game/include)
+  target_link_libraries(sb2game PUBLIC sb2ui ps2runtime)
+
+  add_subdirectory(launcher)
+endif()
 
 if(SB2_BUILD_TESTS)
   enable_testing()

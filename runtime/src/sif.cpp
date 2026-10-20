@@ -56,6 +56,7 @@ uint32_t Sif::iopFree(uint32_t addr) {
 
 void Sif::onSetGsCrt(uint32_t interlace, uint32_t mode, uint32_t field) {
     PS2_DEBUG(Gs, "SetGsCrt interlace=%u mode=%u field=%u", interlace, mode, field);
+    m_.palMode = (mode == 3);
 }
 
 // ------------------------------------------------------------------ registers
