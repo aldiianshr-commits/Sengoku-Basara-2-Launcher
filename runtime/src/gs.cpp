@@ -9,6 +9,7 @@
 #include "ps2/kernel.hpp"
 #include "ps2/log.hpp"
 #include "ps2/machine.hpp"
+#include "ps2/vif.hpp"
 
 namespace ps2 {
 
@@ -787,7 +788,7 @@ uint32_t Gif::read(uint32_t phys) {
     switch (phys & 0xF0) {
     case 0x00: return ctrl;
     case 0x10: return mode;
-    case 0x20: return stat;
+    case 0x20: return (stat & ~3u) | (m_.vif->state(1).maskPath3 ? 2u : 0u) | (mode & 1);
     default: return 0;
     }
 }

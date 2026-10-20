@@ -690,13 +690,13 @@ PS2_OP(PHMADH) {
 PS2_OP(PHMSBH) {
     const Reg128 s = c->r[PS2_RS], t = c->r[PS2_RT];
     c->lo.s32[0] = mh(s, t, 1) - mh(s, t, 0);
-    c->lo.s32[1] = ~c->lo.s32[0];
+    c->lo.s32[1] = ~mh(s, t, 1);
     c->hi.s32[0] = mh(s, t, 3) - mh(s, t, 2);
-    c->hi.s32[1] = ~c->hi.s32[0];
+    c->hi.s32[1] = ~mh(s, t, 3);
     c->lo.s32[2] = mh(s, t, 5) - mh(s, t, 4);
-    c->lo.s32[3] = ~c->lo.s32[2];
+    c->lo.s32[3] = ~mh(s, t, 5);
     c->hi.s32[2] = mh(s, t, 7) - mh(s, t, 6);
-    c->hi.s32[3] = ~c->hi.s32[2];
+    c->hi.s32[3] = ~mh(s, t, 7);
     if (PS2_RD) {
         Reg128 d;
         d.u32[0] = c->lo.u32[0]; d.u32[1] = c->hi.u32[0]; d.u32[2] = c->lo.u32[2]; d.u32[3] = c->hi.u32[2];
@@ -750,7 +750,6 @@ PS2_OP(SQRT_S) {
     c->fcr31 &= ~(fpu::FLAG_D | fpu::FLAG_I);
     uint32_t r = fpu::sqrtMag(t);
     if ((t & fpu::SIGN) && !fpu::isZero(t)) c->fcr31 |= fpu::FLAG_I | fpu::FLAG_SI;
-    else if (fpu::isZero(t)) r = t & fpu::SIGN;
     c->f[PS2_FD] = r;
 }
 PS2_OP(RSQRT_S) {
@@ -758,12 +757,12 @@ PS2_OP(RSQRT_S) {
     c->fcr31 &= ~(fpu::FLAG_D | fpu::FLAG_I);
     if (fpu::isZero(t)) {
         c->fcr31 |= fpu::FLAG_D | fpu::FLAG_SD;
-        c->f[PS2_FD] = ((s ^ t) & fpu::SIGN) | fpu::MAXMAG;
+        c->f[PS2_FD] = (s & fpu::SIGN) | fpu::MAXMAG;
         return;
     }
     if (t & fpu::SIGN) c->fcr31 |= fpu::FLAG_I | fpu::FLAG_SI;
     const uint32_t root = fpu::sqrtMag(t);
-    auto r = fpu::div(s, root);
+    auto r = fpu::div(s, root, true);
     c->f[PS2_FD] = r.value;
 }
 PS2_OP(ABS_S) { c->f[PS2_FD] = c->f[PS2_FS] & fpu::MAXMAG; c->fcr31 &= ~(fpu::FLAG_O | fpu::FLAG_U); }
@@ -785,12 +784,12 @@ PS2_OP(CVT_W_S) { c->f[PS2_FD] = fpu::toInt(c->f[PS2_FS]); }
 PS2_OP(CVT_S_W) { c->f[PS2_FD] = fpu::fromInt(c->f[PS2_FS]); }
 PS2_OP(MAX_S) {
     const uint32_t s = c->f[PS2_FS], t = c->f[PS2_FT];
-    c->f[PS2_FD] = fpu::cmpKey(s) >= fpu::cmpKey(t) ? s : t;
+    c->f[PS2_FD] = fpu::orderKey(s) >= fpu::orderKey(t) ? s : t;
     c->fcr31 &= ~(fpu::FLAG_O | fpu::FLAG_U);
 }
 PS2_OP(MIN_S) {
     const uint32_t s = c->f[PS2_FS], t = c->f[PS2_FT];
-    c->f[PS2_FD] = fpu::cmpKey(s) <= fpu::cmpKey(t) ? s : t;
+    c->f[PS2_FD] = fpu::orderKey(s) <= fpu::orderKey(t) ? s : t;
     c->fcr31 &= ~(fpu::FLAG_O | fpu::FLAG_U);
 }
 PS2_FORCEINLINE void setC(Ctx* c, bool v) {

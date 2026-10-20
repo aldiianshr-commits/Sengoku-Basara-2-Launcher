@@ -1,5 +1,6 @@
 #include "ps2/vu.hpp"
 
+#include <algorithm>
 #include <cmath>
 #include <cstring>
 
@@ -118,33 +119,53 @@ void writeVf(VuState& v, uint32_t reg, const Reg128& val) {
 
 uint32_t fieldOf(const Reg128& r, uint32_t f) { return r.u32[f & 3]; }
 
+// In micro mode FDIV results land after a latency (in cycles).
+void setQ(VuState& v, uint32_t q, int latency) {
+    if (v.pipelined) {
+        // A new FDIV op stalls until the previous one finishes.
+        if (v.qDelay) {
+            if (v.qReady > v.cycle) v.cycle = v.qReady;
+            v.q = v.qPending;
+        }
+        v.qPending = q;
+        v.qDelay = 1;
+        v.qReady = v.cycle + (uint64_t)latency;
+    } else {
+        v.q = q;
+    }
+}
+
 void vuDiv(VuState& v, uint32_t s, uint32_t t) {
     v.status &= ~(ST_I | ST_D);
     if (fpu::isZero(t)) {
         if (fpu::isZero(s)) v.status |= ST_I | (ST_I << 6);
         else v.status |= ST_D | (ST_D << 6);
-        v.q = ((s ^ t) & fpu::SIGN) | fpu::MAXMAG;
+        setQ(v, ((s ^ t) & fpu::SIGN) | fpu::MAXMAG, 7);
         return;
     }
-    v.q = fpu::div(s, t).value;
+    setQ(v, fpu::div(s, t).value, 7);
 }
 
 void vuSqrt(VuState& v, uint32_t t) {
     v.status &= ~(ST_I | ST_D);
     if ((t & fpu::SIGN) && !fpu::isZero(t)) v.status |= ST_I | (ST_I << 6);
-    v.q = fpu::sqrtMag(t);
+    setQ(v, fpu::sqrtMag(t), 7);
 }
 
 void vuRsqrt(VuState& v, uint32_t s, uint32_t t) {
     v.status &= ~(ST_I | ST_D);
     if (fpu::isZero(t)) {
         v.status |= ST_D | (ST_D << 6);
-        v.q = (s & fpu::SIGN) | fpu::MAXMAG;
+        setQ(v, (s & fpu::SIGN) | fpu::MAXMAG, 13);
         return;
     }
     if (t & fpu::SIGN) v.status |= ST_I | (ST_I << 6);
-    v.q = fpu::div(s, fpu::sqrtMag(t)).value;
+    setQ(v, fpu::div(s, fpu::sqrtMag(t), true).value, 13);
 }
+
+inline uint32_t clipR(const VuState& v) { return v.pipelined ? v.clipVis : v.clip; }
+inline uint32_t statusR(const VuState& v) { return v.pipelined ? v.statusVis : v.status; }
+inline uint32_t macR(const VuState& v) { return v.pipelined ? v.macVis : v.mac; }
 
 void rnext(VuState& v) {
     // 23-bit LFSR as documented for the VU random unit.
@@ -368,14 +389,16 @@ void Vu::cop2(Ctx* c, uint32_t raw) {
                 case 16: val = v.status; break;
                 case 17: val = v.mac; break;
                 case 18: val = v.clip; break;
-                case 20: val = v.r; break;
+                case 19: val = 0x2E30; break; // revision
+                case 20: val = v.r & 0x7FFFFF; break;
+                case 24: val = reg24_; break;
                 case 21: val = v.i; break;
                 case 22: val = v.q; break;
                 case 26: val = v.tpc; break;
                 case 27: val = cmsar0; break;
                 case 28: val = fbrst; break;
                 case 29: val = (v_[0].running ? 1u : 0u) | (v_[1].running ? 0x100u : 0u); break;
-                case 31: val = v_[1].tpc; break;
+                case 31: val = cmsar1; break;
                 default: val = 0;
                 }
             if (rt) c->r[rt].u64[0] = (uint64_t)(int64_t)(int32_t)val;
@@ -390,15 +413,19 @@ void Vu::cop2(Ctx* c, uint32_t raw) {
                 case 17: break; // MAC read-only
                 case 18: v.clip = val & 0xFFFFFF; break;
                 case 20: v.r = 0x3F800000 | (val & 0x7FFFFF); break;
+                case 24: reg24_ = val & 0xC0C; break;
                 case 21: v.i = val; break;
                 case 22: v.q = val; break;
                 case 27: cmsar0 = val & 0xFFFF; break;
                 case 28:
                     fbrst = val & 0x0C0C;
-                    if (val & 0x2) v_[0].running = false;
-                    if (val & 0x200) v_[1].running = false;
+                    if (val & 0x2) { v_[0].running = false; fbrst &= ~0x0Cu; }   // VU0 reset
+                    if (val & 0x200) { v_[1].running = false; fbrst &= ~0xC00u; } // VU1 reset
                     break;
-                case 31: startMicro(1, val & 0xFFFF); break;
+                case 31:
+                    cmsar1 = val & 0xFFFF;
+                    startMicro(1, cmsar1);
+                    break;
                 default: break;
                 }
             return;
@@ -574,18 +601,18 @@ bool Vu::execLower(VuState& v, uint32_t ins, uint32_t pc, uint32_t& nextPc, int&
     }
     case 0x08: setVi(it, v.vi[is] + (((ins >> 10) & 0x7800) | (ins & 0x7FF))); break; // IADDIU
     case 0x09: setVi(it, v.vi[is] - (((ins >> 10) & 0x7800) | (ins & 0x7FF))); break; // ISUBIU
-    case 0x10: v.vi[1] = ((v.clip & 0xFFFFFF) == (ins & 0xFFFFFF)) ? 1 : 0; break;     // FCEQ
-    case 0x11: v.clip = ins & 0xFFFFFF; break;                                         // FCSET
-    case 0x12: v.vi[1] = (v.clip & ins & 0xFFFFFF) ? 1 : 0; break;                     // FCAND
-    case 0x13: v.vi[1] = (((v.clip | ins) & 0xFFFFFF) == 0xFFFFFF) ? 1 : 0; break;     // FCOR
-    case 0x14: { const uint32_t i12 = ((ins >> 10) & 0x800) | (ins & 0x7FF); setVi(it, (v.status & 0xFFF) == i12); break; }
-    case 0x15: { const uint32_t i12 = ((ins >> 10) & 0x800) | (ins & 0x7FF); v.status = (v.status & 0x3F) | (i12 & 0xFC0); break; }
-    case 0x16: { const uint32_t i12 = ((ins >> 10) & 0x800) | (ins & 0x7FF); setVi(it, v.status & i12); break; }
-    case 0x17: { const uint32_t i12 = ((ins >> 10) & 0x800) | (ins & 0x7FF); setVi(it, ((v.status | i12) & 0xFFF) == 0xFFF); break; }
-    case 0x18: setVi(it, (v.mac & 0xFFFF) == v.vi[is]); break;          // FMEQ
-    case 0x1A: setVi(it, v.mac & v.vi[is]); break;                     // FMAND
-    case 0x1B: setVi(it, ((v.mac | v.vi[is]) & 0xFFFF) == 0xFFFF); break; // FMOR
-    case 0x1C: setVi(it, v.clip & 0xFFF); break;                        // FCGET
+    case 0x10: v.vi[1] = ((clipR(v) & 0xFFFFFF) == (ins & 0xFFFFFF)) ? 1 : 0; break;     // FCEQ
+    case 0x11: v.clip = v.clipVis = ins & 0xFFFFFF; break;                             // FCSET
+    case 0x12: v.vi[1] = (clipR(v) & ins & 0xFFFFFF) ? 1 : 0; break;                   // FCAND
+    case 0x13: v.vi[1] = (((clipR(v) | ins) & 0xFFFFFF) == 0xFFFFFF) ? 1 : 0; break;   // FCOR
+    case 0x14: { const uint32_t i12 = ((ins >> 10) & 0x800) | (ins & 0x7FF); setVi(it, (statusR(v) & 0xFFF) == i12); break; }
+    case 0x15: { const uint32_t i12 = ((ins >> 10) & 0x800) | (ins & 0x7FF); v.status = (v.status & 0x3F) | (i12 & 0xFC0); v.statusVis = (v.statusVis & 0x3F) | (i12 & 0xFC0); break; }
+    case 0x16: { const uint32_t i12 = ((ins >> 10) & 0x800) | (ins & 0x7FF); setVi(it, statusR(v) & i12); break; }
+    case 0x17: { const uint32_t i12 = ((ins >> 10) & 0x800) | (ins & 0x7FF); setVi(it, ((statusR(v) | i12) & 0xFFF) == 0xFFF); break; }
+    case 0x18: setVi(it, (macR(v) & 0xFFFF) == v.vi[is]); break;        // FMEQ
+    case 0x1A: setVi(it, macR(v) & v.vi[is]); break;                   // FMAND
+    case 0x1B: setVi(it, ((macR(v) | v.vi[is]) & 0xFFFF) == 0xFFFF); break; // FMOR
+    case 0x1C: setVi(it, clipR(v) & 0xFFF); break;                      // FCGET
     case 0x20: branchTo(imm11()); break;                                // B
     case 0x21: setVi(it, pc + 2); branchTo(imm11()); break;             // BAL
     case 0x24: nextPc = ((uint32_t)v.vi[is] * 1) & (v.codeMask >> 3); branchDelay = 1; break; // JR
@@ -632,7 +659,7 @@ bool Vu::execLower(VuState& v, uint32_t ins, uint32_t pc, uint32_t& nextPc, int&
         case 56: vuDiv(v, fieldOf(v.vf[fs], (ins >> 21) & 3), fieldOf(v.vf[ft], (ins >> 23) & 3)); break;
         case 57: vuSqrt(v, fieldOf(v.vf[ft], (ins >> 23) & 3)); break;
         case 58: vuRsqrt(v, fieldOf(v.vf[fs], (ins >> 21) & 3), fieldOf(v.vf[ft], (ins >> 23) & 3)); break;
-        case 59: break; // WAITQ
+        case 59: if (v.qDelay) { if (v.qReady > v.cycle) v.cycle = v.qReady; v.q = v.qPending; v.qDelay = 0; } break; // WAITQ
         case 60: setVi(it, fieldOf(v.vf[fs], (ins >> 21) & 3)); break;
         case 61: { Reg128 o = v.vf[ft]; const uint32_t val = (uint32_t)(int32_t)(int16_t)v.vi[is]; for (int f = 0; f < 4; ++f) if (destBit(ins, f)) o.u32[f] = val; writeVf(v, ft, o); break; }
         case 62: { const uint32_t a = (v.vi[is] * 16u) & v.memMask; for (int f = 0; f < 4; ++f) if (destBit(ins, f)) { uint16_t x; std::memcpy(&x, v.mem + a + f * 4, 2); setVi(it, x); break; } break; }
@@ -648,30 +675,74 @@ bool Vu::execLower(VuState& v, uint32_t ins, uint32_t pc, uint32_t& nextPc, int&
         case 112: case 113: case 114: case 115: case 116: case 117: case 118: case 120: case 121: case 122:
         case 124: case 125: case 126: { // EFU
             const Reg128 s = v.vf[fs];
-            auto f2 = [](uint32_t x) { float f; std::memcpy(&f, &x, 4); return f; };
-            auto u2 = [](float f) { uint32_t x; std::memcpy(&x, &f, 4); return x; };
-            const float x = f2(s.u32[0]), y = f2(s.u32[1]), z = f2(s.u32[2]), w = f2(s.u32[3]);
-            const float fsf = f2(s.u32[(ins >> 21) & 3]);
-            float r = 0;
+            const uint32_t X = clampIn(s.u32[0]), Y = clampIn(s.u32[1]), Z = clampIn(s.u32[2]), W = clampIn(s.u32[3]);
+            const uint32_t F = clampIn(s.u32[(ins >> 21) & 3]);
+            auto M = [](uint32_t a, uint32_t b) { return fpu::mul(a, b).value; };
+            auto A = [](uint32_t a, uint32_t b) { return fpu::add(a, b).value; };
+            auto D = [](uint32_t a, uint32_t b) { return fpu::div(a, b).value; };
+            auto DT = [](uint32_t a, uint32_t b) { return fpu::div(a, b, true).value; };
+            auto SQ = [](uint32_t a) { return fpu::sqrtMag(a); };
+            constexpr uint32_t ONE = 0x3F800000;
+            const uint32_t ss = A(A(M(X, X), M(Y, Y)), M(Z, Z));
+            auto hostAtan = [](float a) {
+                float r = std::atan(a);
+                uint32_t u;
+                std::memcpy(&u, &r, 4);
+                return u;
+            };
+            auto f2 = [](uint32_t u) { float f; std::memcpy(&f, &u, 4); return f; };
+            uint32_t r = 0;
             switch (idx) {
-            case 112: r = x * x + y * y + z * z; break;                // ESADD
-            case 113: r = 1.0f / (x * x + y * y + z * z); break;       // ERSADD
-            case 114: r = std::sqrt(x * x + y * y + z * z); break; // ELENG
-            case 115: r = 1.0f / std::sqrt(x * x + y * y + z * z); break;
-            case 116: r = std::atan2(y, x); break;              // EATANxy
-            case 117: r = std::atan2(z, x); break;              // EATANxz
-            case 118: r = x + y + z + w; break;                       // ESUM
-            case 120: r = std::sqrt(fsf < 0 ? -fsf : fsf); break;
-            case 121: r = 1.0f / std::sqrt(fsf < 0 ? -fsf : fsf); break;
-            case 122: r = 1.0f / fsf; break;
-            case 124: r = std::sin(fsf); break;
-            case 125: r = std::atan(fsf); break;
-            case 126: r = std::exp(-fsf); break;
+            case 112: r = ss; break;                    // ESADD
+            case 113: r = D(ONE, ss); break;            // ERSADD
+            case 114: r = SQ(ss); break;                // ELENG
+            case 115: r = DT(ONE, SQ(ss)); break;       // ERLENG
+            case 116: r = hostAtan(f2(Y) / f2(X)); break; // EATANxy
+            case 117: r = hostAtan(f2(Z) / f2(X)); break; // EATANxz
+            case 118: r = A(A(A(X, Y), Z), W); break;   // ESUM
+            case 120: r = SQ(F); break;                 // ESQRT
+            case 121: r = DT(ONE, SQ(F)); break;        // ERSQRT
+            case 122: r = D(ONE, F); break;             // ERCPR
+            case 124: { // ESIN: x - x^3/6 + ... (series evaluated with VU arithmetic)
+                static constexpr uint32_t c[5] = {0x3F800000, 0xBE2AAAA4, 0x3C08873E, 0xB94FB21F, 0x362E9C14};
+                const uint32_t x2 = M(F, F);
+                uint32_t p = F, acc = F;
+                for (int i = 1; i < 5; ++i) {
+                    p = M(p, x2);
+                    acc = A(acc, M(c[i], p));
+                }
+                r = acc;
+                break;
             }
-            v.p = u2(r);
+            case 125: r = hostAtan(f2(F)); break; // EATAN
+            case 126: { // EEXP: 1 / (1 + c0 x + ... + c5 x^6)^4
+                static constexpr uint32_t c[6] = {0x3E7FFFA8, 0x3D0007F4, 0x3B29D3FF, 0x3933E553, 0x36B63510, 0x353961AC};
+                uint32_t p = F, acc = ONE;
+                for (int i = 0; i < 6; ++i) {
+                    acc = A(acc, M(c[i], p));
+                    p = M(p, F);
+                }
+                acc = M(acc, acc);
+                acc = M(acc, acc);
+                r = D(ONE, acc);
+                break;
+            }
+            }
+            static const int lat[16] = {11, 18, 18, 24, 54, 54, 12, 0, 12, 18, 12, 0, 29, 54, 44, 0};
+            if (v.pDelay) { // EFU busy: stall until done
+                if (v.pReady > v.cycle) v.cycle = v.pReady;
+                v.p = v.pPending;
+            }
+            v.pPending = r;
+            v.pDelay = 1;
+            v.pReady = v.cycle + (uint64_t)lat[idx - 112];
+            if (!v.pipelined) {
+                v.p = r;
+                v.pDelay = 0;
+            }
             break;
         }
-        case 123: break; // WAITP
+        case 123: if (v.pDelay) { if (v.pReady > v.cycle) v.cycle = v.pReady; v.p = v.pPending; v.pDelay = 0; } break; // WAITP
         default: break;
         }
         break;
@@ -683,8 +754,79 @@ bool Vu::execLower(VuState& v, uint32_t ins, uint32_t pc, uint32_t& nextPc, int&
     return true;
 }
 
+namespace {
+// Register usage of an upper instruction, for hazard (stall) detection.
+struct UpperUse {
+    int src1 = -1, src2 = -1; // vf registers read
+    bool readsAcc = false;
+    int dst = -1;             // vf register written (-1 none)
+    bool writesAcc = false;
+};
+UpperUse upperUse(uint32_t ins) {
+    UpperUse u;
+    const uint32_t funct = ins & 0x3F, fs = (ins >> 11) & 31, ft = (ins >> 16) & 31, fd = (ins >> 6) & 31;
+    if (funct < 60) {
+        if (funct >= 48) return u; // macro-only lower ops
+        u.src1 = (int)fs;
+        const bool scalar = funct >= 28 && funct <= 39; // q / i forms
+        if (!scalar) u.src2 = (int)ft;
+        u.readsAcc = (funct >= 8 && funct <= 15) || funct == 33 || funct == 35 || funct == 37 || funct == 39 ||
+                     funct == 41 || funct == 45 || funct == 46;
+        u.dst = (int)fd;
+        return u;
+    }
+    const uint32_t idx = (((ins >> 6) & 0x1F) << 2) | (ins & 3);
+    if (idx == 47) return u; // NOP
+    u.src1 = (int)fs;
+    if ((idx >= 16 && idx <= 23) || idx == 29) { // ITOF / FTOI / ABS -> ft
+        u.dst = (int)ft;
+        return u;
+    }
+    if (idx == 31) { // CLIP
+        u.src2 = (int)ft;
+        return u;
+    }
+    const bool scalar = idx == 28 || idx == 30 || (idx >= 32 && idx <= 39);
+    if (!scalar) u.src2 = (int)ft;
+    u.readsAcc = (idx >= 8 && idx <= 15) || idx == 33 || idx == 35 || idx == 37 || idx == 39 || idx == 41 || idx == 45;
+    u.writesAcc = true;
+    return u;
+}
+// vf registers read by a lower instruction.
+void lowerSources(uint32_t ins, int& a, int& b) {
+    a = b = -1;
+    const uint32_t op = ins >> 25, fs = (ins >> 11) & 31, ft = (ins >> 16) & 31;
+    if (op == 0x01) a = (int)fs; // SQ
+    if (op != 0x40 || (ins & 0x3C) != 0x3C) return;
+    const uint32_t idx = (((ins >> 6) & 0x1F) << 2) | (ins & 3);
+    switch (idx) {
+    case 48: case 49: case 53: case 55: case 60: case 66: case 67: a = (int)fs; break; // MOVE MR32 SQI SQD MTIR RINIT RXOR
+    case 56: case 58: a = (int)fs; b = (int)ft; break;                                 // DIV RSQRT
+    case 57: b = (int)ft; break;                                                       // SQRT
+    default:
+        if (idx >= 112 && idx <= 126) a = (int)fs;                                     // EFU
+        break;
+    }
+}
+} // namespace
+
 void Vu::runMicro(VuState& v) {
     uint32_t pc = v.tpc;
+    v.pipelined = true;
+    v.cycle = 0;
+    v.qDelay = v.pDelay = 0;
+    uint64_t vfReady[32] = {};
+    uint64_t accReady = 0;
+    // Flag writes become visible to lower-pipe flag instructions 4 cycles after issue.
+    struct FlagEvt {
+        uint64_t at;
+        uint32_t mac, status, clip;
+    };
+    FlagEvt fq[64];
+    uint32_t fqHead = 0, fqTail = 0;
+    v.macVis = v.mac;
+    v.statusVis = v.status;
+    v.clipVis = v.clip;
     int branchPending = 0;
     uint32_t branchTarget = 0;
     bool endPending = false;
@@ -698,20 +840,46 @@ void Vu::runMicro(VuState& v) {
         const bool eBit = (upperW >> 30) & 1;
         uint32_t nextPc = (pc + 1) & pcMask;
         int bd = 0;
+        // Data hazards: stall until the registers this pair reads are ready.
+        const UpperUse uu = upperUse(upperW);
+        uint64_t need = 0;
+        if (uu.src1 > 0) need = std::max(need, vfReady[uu.src1]);
+        if (uu.src2 > 0) need = std::max(need, vfReady[uu.src2]);
+        if (uu.readsAcc) need = std::max(need, accReady);
+        if (!iBit) {
+            int la, lb;
+            lowerSources(lower, la, lb);
+            if (la > 0) need = std::max(need, vfReady[la]);
+            if (lb > 0) need = std::max(need, vfReady[lb]);
+        }
+        if (need > v.cycle) v.cycle = need;
+        // Results that have arrived by now.
+        if (v.qDelay && v.cycle >= v.qReady) {
+            v.q = v.qPending;
+            v.qDelay = 0;
+        }
+        if (v.pDelay && v.cycle >= v.pReady) {
+            v.p = v.pPending;
+            v.pDelay = 0;
+        }
+        while (fqHead != fqTail && fq[fqHead & 63].at <= v.cycle) {
+            v.macVis = fq[fqHead & 63].mac;
+            v.statusVis = fq[fqHead & 63].status;
+            v.clipVis = fq[fqHead & 63].clip;
+            ++fqHead;
+        }
+        const uint64_t issue = v.cycle;
         if (iBit) {
             vuops::upper(v, upperW);
             v.i = lower;
         } else {
-            // Upper reads happen before lower writes: if lower writes a vf
-            // register the upper op reads, run upper first.
             const uint32_t uFs = (upperW >> 11) & 31, uFt = (upperW >> 16) & 31;
             const uint32_t lOp = lower >> 25;
             const uint32_t lFt = (lower >> 16) & 31;
-            const bool lowerWritesFt = lOp == 0x00 || (lOp == 0x40 && (lower & 0x3C) == 0x3C &&
-                                                        ((((lower >> 6) & 0x1F) << 2 | (lower & 3)) == 48 ||
-                                                         (((lower >> 6) & 0x1F) << 2 | (lower & 3)) == 49 ||
-                                                         (((lower >> 6) & 0x1F) << 2 | (lower & 3)) == 52 ||
-                                                         (((lower >> 6) & 0x1F) << 2 | (lower & 3)) == 54));
+            const uint32_t lIdx = (((lower >> 6) & 0x1F) << 2) | (lower & 3);
+            const bool lowerWritesFt =
+                lOp == 0x00 || (lOp == 0x40 && (lower & 0x3C) == 0x3C &&
+                                (lIdx == 48 || lIdx == 49 || lIdx == 52 || lIdx == 54 || lIdx == 61 || lIdx == 64 || lIdx == 65));
             if (lowerWritesFt && lFt != 0 && (lFt == uFs || lFt == uFt)) {
                 vuops::upper(v, upperW);
                 execLower(v, lower, pc, nextPc, bd);
@@ -719,11 +887,16 @@ void Vu::runMicro(VuState& v) {
                 execLower(v, lower, pc, nextPc, bd);
                 vuops::upper(v, upperW);
             }
+            if (lowerWritesFt && lFt) vfReady[lFt] = std::max(vfReady[lFt], issue + 1);
         }
+        if (uu.dst > 0) vfReady[uu.dst] = issue + 4;
+        if (uu.writesAcc) accReady = issue + 4;
+        if (fqTail - fqHead < 64) fq[(fqTail++) & 63] = {issue + 4, v.mac, v.status, v.clip};
         v.vf[0].u32[0] = 0;
         v.vf[0].u32[1] = 0;
         v.vf[0].u32[2] = 0;
         v.vf[0].u32[3] = 0x3F800000;
+        v.cycle = std::max(v.cycle, issue) + 1;
         ++steps;
         if (endPending) {
             v.running = false;
@@ -741,7 +914,7 @@ void Vu::runMicro(VuState& v) {
             branchPending = 1;
             branchTarget = nextPc;
         }
-        if (steps > 20000000) {
+        if (steps > 5000000) {
             logError("vu%d: micro program did not terminate (pc=%04x)", v.index, pc);
             v.running = false;
             break;
@@ -749,6 +922,16 @@ void Vu::runMicro(VuState& v) {
     }
     v.tpc = pc;
     v.microSteps += steps;
+    // Results still in flight complete when the program ends.
+    if (v.qDelay) {
+        v.q = v.qPending;
+        v.qDelay = 0;
+    }
+    if (v.pDelay) {
+        v.p = v.pPending;
+        v.pDelay = 0;
+    }
+    v.pipelined = false;
 }
 
 void Vu::execUpper(VuState& v, uint32_t ins) { vuops::upper(v, ins); }

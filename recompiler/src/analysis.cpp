@@ -162,6 +162,7 @@ const Function* Program::functionAt(uint32_t start) const {
 }
 
 void Program::computeLabels() {
+    // Pass 1: labels inside each function and cross-function targets.
     for (auto& f : funcs_) {
         auto inF = [&](uint32_t a) { return a >= f.start && a < f.end; };
         f.labels.insert(f.start);
@@ -172,7 +173,11 @@ void Program::computeLabels() {
         for (uint32_t a = f.start; a < f.end; a += 4) {
             Insn in = insnAt(a);
             if (!in.isControl()) continue;
-            if (in.hasStaticTarget() && inF(in.staticTarget())) f.labels.insert(in.staticTarget());
+            if (in.hasStaticTarget()) {
+                const uint32_t t = in.staticTarget();
+                if (inF(t)) f.labels.insert(t);
+                else if (Function* g = const_cast<Function*>(containing(t))) g->labels.insert(t);
+            }
             const Kind k = in.kind();
             if (k == Kind::JumpLink || k == Kind::JumpLinkReg || k == Kind::BranchLink ||
                 k == Kind::BranchLinkLikely) {
@@ -182,15 +187,21 @@ void Program::computeLabels() {
             if (d.isControl()) {
                 stats_.branchInDelaySlot++;
                 if (inF(a + 4)) f.labels.insert(a + 4);
-                if (in.hasStaticTarget() && inF(in.staticTarget() + 4)) f.labels.insert(in.staticTarget() + 4);
+                if (in.hasStaticTarget()) {
+                    const uint32_t t4 = in.staticTarget() + 4;
+                    if (inF(t4)) f.labels.insert(t4);
+                    else if (Function* g = const_cast<Function*>(containing(t4))) g->labels.insert(t4);
+                }
                 if (inF(a + 8)) f.labels.insert(a + 8);
             }
         }
-        // Delay-slot cascade: if a delay slot is itself a jump target, the
-        // fall-through path needs a label after it (see codegen).
+    }
+    // Pass 2: delay-slot cascade.  If a delay slot is itself a jump target,
+    // the fall-through path needs a label after it (see codegen).
+    for (auto& f : funcs_) {
         for (uint32_t a = f.start; a < f.end; a += 4) {
             Insn in = insnAt(a);
-            if (in.isControl() && f.labels.count(a + 4) && inF(a + 8)) f.labels.insert(a + 8);
+            if (in.isControl() && f.labels.count(a + 4) && a + 8 < f.end) f.labels.insert(a + 8);
         }
     }
 }

@@ -19,8 +19,11 @@ def run(cmd, **kw):
     return subprocess.run(cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True, **kw)
 
 
+HEADER_MTIME = 0.0
+
+
 def compile_one(cxx, src, obj, include, flags):
-    if obj.exists() and obj.stat().st_mtime >= src.stat().st_mtime:
+    if obj.exists() and obj.stat().st_mtime >= max(src.stat().st_mtime, HEADER_MTIME):
         return True, ""
     r = run([cxx, "-std=c++20", *flags, "-fno-strict-aliasing", "-w", "-I", str(include), "-c", str(src), "-o", str(obj)])
     return r.returncode == 0, r.stderr
@@ -92,6 +95,8 @@ def main():
     ap.add_argument("--verbose", action="store_true")
     args = ap.parse_args()
     args.flags = args.flags.split()
+    global HEADER_MTIME
+    HEADER_MTIME = max(p.stat().st_mtime for p in (args.root / "runtime" / "include").rglob("*.hpp"))
     work = args.work or (args.build / "autotests")
     work.mkdir(parents=True, exist_ok=True)
     tests = []

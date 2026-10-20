@@ -255,6 +255,15 @@ private:
         const uint32_t t1 = b1.staticTarget();
         const uint32_t t2 = b2.staticTarget();
         flushCycles();
+        auto isBc1 = [](Op o) { return o == Op::BC1F || o == Op::BC1T || o == Op::BC1FL || o == Op::BC1TL; };
+        if ((b1.op == Op::BC1F || b1.op == Op::BC1T) && isBc1(b2.op)) {
+            // Hardware quirk (verified on a real PS2): a non-likely BC1x whose
+            // delay slot holds another BC1x has no effect of its own; the
+            // second branch decides control flow.
+            out_ << "    // BC1 in BC1 delay slot: first branch is overridden\n";
+            out_ << "    PS2_CYCLES(1); " << transfer(a + 4, a) << "\n";
+            return;
+        }
         out_ << "    // branch with a branch in its delay slot\n";
         out_ << "    {\n        const bool t1 = "
              << (b1.isConditional() ? std::string(condFn(b1.op)) + "(c, " + imm(b1.raw) + ")" : "true") << ";\n";

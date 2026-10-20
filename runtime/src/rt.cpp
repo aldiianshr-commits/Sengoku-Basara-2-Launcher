@@ -2,6 +2,7 @@
 #include <cstdio>
 #include <cstdlib>
 
+#include "ps2/hw.hpp"
 #include "ps2/kernel.hpp"
 #include "ps2/log.hpp"
 #include "ps2/machine.hpp"
@@ -106,7 +107,35 @@ void rt_write128(Ctx* c, uint32_t a, const Reg128* v) {
 
 // ------------------------------------------------------------------ COP0
 
+namespace {
+// Performance counters (MFPS/MTPS/MFPC/MTPC: COP0 register 25).
+struct PerfCounters {
+    uint32_t pccr = 0;
+    uint32_t pcr[2] = {0, 0};
+    int64_t since[2] = {0, 0};
+    bool counting(int i) const {
+        if (!(pccr & 0x80000000u)) return false;
+        const uint32_t ev = (pccr >> (i ? 15 : 5)) & 31;
+        const uint32_t modes = (pccr >> (i ? 11 : 1)) & 15;
+        return ev == 1 && modes != 0;
+    }
+    uint32_t read(int i, int64_t now) const {
+        return counting(i) ? pcr[i] + (uint32_t)(now - since[i]) : pcr[i];
+    }
+    void latch(int64_t now) {
+        for (int i = 0; i < 2; ++i) {
+            pcr[i] = read(i, now);
+            since[i] = now;
+        }
+    }
+} g_perf;
+} // namespace
+
 uint32_t rt_mfc0(Ctx* c, uint32_t raw) {
+    if (((raw >> 11) & 31) == 25) {
+        if (raw & 1) return g_perf.read((raw >> 1) & 1, c->cycles); // MFPC
+        return g_perf.pccr;                                          // MFPS
+    }
     const uint32_t rd = (raw >> 11) & 31;
     Machine* m = c->m;
     switch (rd) {
@@ -125,6 +154,12 @@ uint32_t rt_mfc0(Ctx* c, uint32_t raw) {
 
 void rt_mtc0(Ctx* c, uint32_t raw, uint32_t v) {
     const uint32_t rd = (raw >> 11) & 31;
+    if (rd == 25) {
+        g_perf.latch(c->cycles);
+        if (raw & 1) g_perf.pcr[(raw >> 1) & 1] = v;              // MTPC
+        else if (((raw >> 1) & 31) == 0) g_perf.pccr = v & 0x800FFBFEu; // MTPS (only specifier 0)
+        return;
+    }
     if (rd == 12) {
         c->intEnabled = (v & 0x10000) != 0;
         if (c->intEnabled) rt_ei(c);
@@ -135,9 +170,10 @@ void rt_mtc0(Ctx* c, uint32_t raw, uint32_t v) {
 }
 
 bool rt_cpcond0(Ctx* c) {
-    // CPCOND0 is set when all DMA channels selected by D_PCR.CPC have finished.
-    (void)c;
-    return true;
+    // CPCOND0 is set when every DMA channel selected in D_PCR.CPC has its
+    // D_STAT.CIS bit set.
+    const Dmac& d = *c->m->dmac;
+    return ((d.pcr & 0x3FF) & ~(d.stat & 0x3FF)) == 0;
 }
 
 void rt_ei(Ctx* c) {

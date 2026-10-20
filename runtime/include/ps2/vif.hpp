@@ -23,6 +23,9 @@ struct VifState {
     uint32_t unpackAddr = 0, unpackCount = 0, unpackDone = 0, cycleIndex = 0;
     uint32_t mpgAddr = 0;
     uint64_t commands = 0;
+    // Interrupt stall: words received while stalled wait here.
+    bool stalled = false;
+    std::vector<uint32_t> pending;
 };
 
 class Vif {

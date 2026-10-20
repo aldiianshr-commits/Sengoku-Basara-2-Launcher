@@ -178,7 +178,7 @@ void Dmac::write(uint32_t p, uint32_t v) {
             if (!wasStarted && (v & 0x100)) kick(c);
             break;
         }
-        case 0x10: r.madr = v & ~0xFu; break;
+        case 0x10: r.madr = (c == DMA_TO_SPR || c == DMA_FROM_SPR) ? (v & 0x7FFFFFF0u) : (v & ~0xFu); break;
         case 0x20: r.qwc = v & 0xFFFF; break;
         case 0x30: r.tadr = v & ~0xFu; break;
         case 0x40: r.asr0 = v & ~0xFu; break;
@@ -352,13 +352,32 @@ void Dmac::transferToSpr(int c) {
     DmaRegs& r = ch[c];
     int64_t cost = 0;
     uint32_t sadr = r.sadr;
-    walkSource(
-        m_, r,
-        [&](const Reg128& q) {
+    const uint32_t mod = (r.chcr >> 2) & 3;
+    if (mod == 2) { // interleave: TQWC qwords transferred, SQWC qwords skipped
+        const uint32_t tq = (sqwc >> 16) & 0xFF, sq = sqwc & 0xFF;
+        uint32_t inBlock = 0;
+        while (r.qwc) {
+            Reg128 q;
+            m_.read128(r.madr, &q);
             std::memcpy(m_.spr + (sadr & (SPR_SIZE - 1)), &q, 16);
             sadr = (sadr + 16) & (SPR_SIZE - 1);
-        },
-        [&](const Reg128&) {}, cost);
+            r.madr += 16;
+            --r.qwc;
+            ++cost;
+            if (tq && ++inBlock == tq) {
+                inBlock = 0;
+                r.madr += sq * 16;
+            }
+        }
+    } else {
+        walkSource(
+            m_, r,
+            [&](const Reg128& q) {
+                std::memcpy(m_.spr + (sadr & (SPR_SIZE - 1)), &q, 16);
+                sadr = (sadr + 16) & (SPR_SIZE - 1);
+            },
+            [&](const Reg128&) {}, cost);
+    }
     r.sadr = sadr;
     const int ch_ = c;
     m_.schedule(m_.cycles + 8 + cost, [this, ch_]() { complete(ch_); });
@@ -366,18 +385,25 @@ void Dmac::transferToSpr(int c) {
 
 void Dmac::transferFromSpr(int c) {
     DmaRegs& r = ch[c];
-    // fromSPR supports normal mode and destination chain; implement normal.
-    const uint32_t qwc = r.qwc;
-    for (uint32_t i = 0; i < qwc; ++i) {
+    const uint32_t mod = (r.chcr >> 2) & 3;
+    const uint32_t tq = (sqwc >> 16) & 0xFF, sq = sqwc & 0xFF;
+    uint32_t inBlock = 0;
+    int64_t cost = 0;
+    while (r.qwc) {
         Reg128 q;
-        std::memcpy(&q, m_.spr + ((r.sadr + i * 16) & (SPR_SIZE - 1)), 16);
-        m_.write128(r.madr + i * 16, &q);
+        std::memcpy(&q, m_.spr + (r.sadr & (SPR_SIZE - 1)), 16);
+        m_.write128(r.madr, &q);
+        r.madr += 16;
+        r.sadr = (r.sadr + 16) & (SPR_SIZE - 1);
+        --r.qwc;
+        ++cost;
+        if (mod == 2 && tq && ++inBlock == tq) {
+            inBlock = 0;
+            r.madr += sq * 16;
+        }
     }
-    r.madr += qwc * 16;
-    r.sadr = (r.sadr + qwc * 16) & (SPR_SIZE - 1);
-    r.qwc = 0;
     const int ch_ = c;
-    m_.schedule(m_.cycles + 8 + qwc, [this, ch_]() { complete(ch_); });
+    m_.schedule(m_.cycles + 8 + cost, [this, ch_]() { complete(ch_); });
 }
 
 void Dmac::transferSif1() {

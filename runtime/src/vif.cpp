@@ -20,7 +20,7 @@ Vif::Vif(Machine& m) : m_(m) {
 uint32_t Vif::readReg(int vif, uint32_t off) {
     VifState& s = v_[vif & 1];
     switch (off & 0x1F0) {
-    case 0x000: return s.stat;
+    case 0x000: return (s.stat & ~3u) | (s.stalled ? 2u : ((s.cmd != 0 && s.wordsLeft) ? 1u : 0u));
     case 0x010: return s.fbrst;
     case 0x020: return s.err;
     case 0x030: return s.mark;
@@ -50,6 +50,19 @@ void Vif::writeReg(int vif, uint32_t off, uint32_t v) {
             s.wordsLeft = 0;
             s.buf.clear();
             s.stat = 0;
+            s.stalled = false;
+            s.pending.clear();
+            s.mask = 0;
+        }
+        if (v & 8) { // STC: cancel stall and resume
+            s.stat &= ~0x3F40u; // VSS VFS VIS INT ER0 ER1 MRK
+            s.stat &= ~3u;
+            if (s.stalled) {
+                s.stalled = false;
+                std::vector<uint32_t> rest;
+                rest.swap(s.pending);
+                feed(vif, rest.data(), rest.size());
+            }
         }
         break;
     case 0x020: s.err = v; break;
@@ -77,12 +90,15 @@ void Vif::startCommand(VifState& s, uint32_t code) {
     s.wordsLeft = 0;
     if ((op & 0x60) == 0x60) { // UNPACK
         const uint32_t n = num ? num : 256;
-        const uint32_t cl = s.cycle & 0xFF, wl = (s.cycle >> 8) & 0xFF;
+        uint32_t cl = s.cycle & 0xFF, wl = (s.cycle >> 8) & 0xFF;
+        if (cl == 0) cl = 256;
+        if (wl == 0) wl = 256;
         uint32_t elements = n;
-        if (wl && cl < wl) elements = (n / wl) * cl + std::min(n % wl, cl);
+        if (cl < wl) elements = (n / wl) * cl + std::min(n % wl, cl);
         const uint32_t bitsTotal = elements * unpackDataBits(code);
         s.wordsLeft = (bitsTotal + 31) / 32;
-        s.num = n;
+        s.num = s.index == 0 ? (n & 0xFF) : n;
+        s.unpackCount = n;
         if (s.wordsLeft == 0) finishCommand(s);
         return;
     }
@@ -131,6 +147,7 @@ void Vif::finishCommand(VifState& s) {
     const uint32_t op = (code >> 24) & 0x7F;
     if ((op & 0x60) == 0x60) {
         unpackWords(s);
+        s.num = 0;
     } else {
         switch (op) {
         case 0x20: s.mask = s.buf.empty() ? 0 : s.buf[0]; break;
@@ -151,9 +168,14 @@ void Vif::finishCommand(VifState& s) {
         default: break;
         }
     }
+    if (op == 0x07) s.stat |= 0x40; // MRK
     if (code & 0x80000000u) {
         m_.intc->raise(s.index == 0 ? INTC_VIF0 : INTC_VIF1);
         s.stat |= 0x800; // INT
+        if (op != 0x07) {  // MARK does not stall
+            s.stat |= 0x400; // VIS: stalled on interrupt
+            s.stalled = true;
+        }
     }
     s.cmd = 0;
     s.buf.clear();
@@ -169,7 +191,9 @@ void Vif::unpackWords(VifState& s) {
     if (flg && s.index == 1) addr += s.tops;
     VuState& vu = m_.vu->state(s.index);
     const uint32_t qmask = vu.memMask >> 4;
-    const uint32_t cl = s.cycle & 0xFF, wl = (s.cycle >> 8) & 0xFF;
+    uint32_t cl = s.cycle & 0xFF, wl = (s.cycle >> 8) & 0xFF;
+    if (cl == 0) cl = 256;
+    if (wl == 0) wl = 256;
     const uint8_t* data = reinterpret_cast<const uint8_t*>(s.buf.data());
     const size_t dataBytes = s.buf.size() * 4;
     size_t bitPos = 0;
@@ -186,15 +210,14 @@ void Vif::unpackWords(VifState& s) {
         const uint32_t sh = 32 - nbits;
         return (uint32_t)((int32_t)(v << sh) >> sh);
     };
-    const uint32_t n = s.num;
+    const uint32_t n = s.unpackCount;
     for (uint32_t i = 0; i < n; ++i) {
         uint32_t qaddr;
         uint32_t cycIdx;
         bool fill = false;
-        if (wl == 0 || cl >= wl) { // skipping (or normal) write
-            const uint32_t w = wl ? wl : 1;
-            qaddr = addr + (i / w) * (cl ? cl : 1) + (i % w);
-            cycIdx = i % w;
+        if (cl >= wl) { // skipping (or normal) write
+            qaddr = addr + (i / wl) * cl + (i % wl);
+            cycIdx = i % wl;
         } else { // filling write
             qaddr = addr + i;
             cycIdx = i % wl;
@@ -234,6 +257,8 @@ void Vif::unpackWords(VifState& s) {
                 else if (s.mode == 2) {
                     d += s.row[f];
                     s.row[f] = d;
+                } else if (s.mode == 3) {
+                    s.row[f] = d; // undocumented: row tracks the last data
                 }
                 out[f] = d;
                 break;
@@ -251,6 +276,10 @@ void Vif::feed(int vif, const uint32_t* words, size_t count) {
     VifState& s = v_[vif & 1];
     size_t i = 0;
     while (i < count) {
+        if (s.stalled) {
+            s.pending.insert(s.pending.end(), words + i, words + count);
+            return;
+        }
         if (s.cmd == 0 && s.wordsLeft == 0) {
             startCommand(s, words[i++]);
             continue;

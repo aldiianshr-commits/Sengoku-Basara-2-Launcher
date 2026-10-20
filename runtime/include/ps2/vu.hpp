@@ -27,6 +27,14 @@ struct VuState {
     int index = 0;
     // micro-mode bookkeeping
     uint64_t microSteps = 0;
+    // Pipeline model (micro mode): flags written by upper ops become visible
+    // to lower-pipe flag instructions 4 instruction pairs later; Q (FDIV) and
+    // P (EFU) results arrive after the unit's latency.
+    bool pipelined = false;
+    uint32_t macVis = 0, statusVis = 0, clipVis = 0;
+    uint32_t qPending = 0, pPending = 0;
+    int qDelay = 0, pDelay = 0; // non-zero while a result is in flight
+    uint64_t cycle = 0, qReady = 0, pReady = 0;
 };
 
 class Vu {
@@ -46,7 +54,7 @@ public:
     void xgkick(uint32_t vuMemAddr);
 
     uint32_t fbrst = 0;
-    uint32_t cmsar0 = 0;
+    uint32_t cmsar0 = 0, cmsar1 = 0;
 
 private:
     void runMicro(VuState& v);
@@ -54,6 +62,7 @@ private:
     bool execLower(VuState& v, uint32_t ins, uint32_t pc, uint32_t& nextPc, int& branchDelay);
     Machine& m_;
     VuState v_[2];
+    uint32_t reg24_ = 0;
 };
 
 namespace vuops {
