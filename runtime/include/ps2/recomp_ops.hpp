@@ -761,6 +761,8 @@ PS2_OP(RSQRT_S) {
         return;
     }
     if (t & fpu::SIGN) c->fcr31 |= fpu::FLAG_I | fpu::FLAG_SI;
+    // sqrt rounded to nearest, quotient truncated: matches the hardware on
+    // every ps2autotests case except 1/sqrt(25) (hardware: 0x3e4ccccd).
     const uint32_t root = fpu::sqrtMag(t);
     auto r = fpu::div(s, root, true);
     c->f[PS2_FD] = r.value;

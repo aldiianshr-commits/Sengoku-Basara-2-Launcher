@@ -91,7 +91,7 @@ void Vif::startCommand(VifState& s, uint32_t code) {
     if ((op & 0x60) == 0x60) { // UNPACK
         const uint32_t n = num ? num : 256;
         uint32_t cl = s.cycle & 0xFF, wl = (s.cycle >> 8) & 0xFF;
-        if (cl == 0) cl = 256;
+        // CL=0 stays 0: hardware then uses filling write (contiguous, cycle = i % WL)
         if (wl == 0) wl = 256;
         uint32_t elements = n;
         if (cl < wl) elements = (n / wl) * cl + std::min(n % wl, cl);
@@ -192,7 +192,7 @@ void Vif::unpackWords(VifState& s) {
     VuState& vu = m_.vu->state(s.index);
     const uint32_t qmask = vu.memMask >> 4;
     uint32_t cl = s.cycle & 0xFF, wl = (s.cycle >> 8) & 0xFF;
-    if (cl == 0) cl = 256;
+    // CL=0 stays 0: hardware then uses filling write (contiguous, cycle = i % WL)
     if (wl == 0) wl = 256;
     const uint8_t* data = reinterpret_cast<const uint8_t*>(s.buf.data());
     const size_t dataBytes = s.buf.size() * 4;
