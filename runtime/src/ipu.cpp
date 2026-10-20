@@ -416,7 +416,7 @@ void idct8x8(const int16_t in[64], int16_t out[64]) {
     static bool init = false;
     if (!init) {
         for (int x = 0; x < 8; ++x)
-            for (int u = 0; u < 8; ++u) cosTab[x][u] = (u == 0 ? std::sqrt(0.125) : 0.5) * std::cos((2 * x + 1) * u * M_PI / 16.0);
+            for (int u = 0; u < 8; ++u) cosTab[x][u] = (u == 0 ? std::sqrt(0.125) : 0.5) * std::cos((2 * x + 1) * u * 3.14159265358979323846 / 16.0);
         init = true;
     }
     double tmp[64];

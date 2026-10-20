@@ -70,7 +70,6 @@ private:
     uint32_t cmd_ = 0;
     bool busy_ = false;
     uint32_t data_ = 0;    // IPU_CMD DATA
-    uint32_t top_ = 0;     // IPU_TOP
     uint32_t ctrl_ = 0;    // writable control bits (IDP, AS, IVF, QST, MP1, PCT)
     bool ecd_ = false, scd_ = false;
     uint32_t cbp_ = 0;
